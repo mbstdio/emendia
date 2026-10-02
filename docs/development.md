@@ -24,6 +24,8 @@ cargo build --release --locked
 
 The release executable is `target/release/emendia.exe`, built without a console window. The initial build takes longer because GPUI has many dependencies. No Node.js, embedded browser or web server is required.
 
+The [release workflow](releasing.md) builds this executable with a statically linked Visual C++ runtime, distributes it directly as the portable download, and packages the same binary with Inno Setup. See that guide for local packaging and build triggers.
+
 For a temporary interface-language override, use `--ui-language=en` or `--ui-language=fr`. This does not save the preference unless you change it in Settings.
 
 ## Source conventions

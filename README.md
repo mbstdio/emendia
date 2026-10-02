@@ -10,11 +10,16 @@ Select text → press a shortcut → review the suggestion → **Replace** or **
 
 ## Getting started
 
-1. [Build Emendia](#building-on-windows) and run `target/release/emendia.exe`. There is no installer yet.
+1. Download a Windows x64 build from [Releases](https://github.com/mbstdio/emendia/releases):
+   - **Portable:** run `Emendia-<version>-windows-x64.exe` directly, without installation.
+   - **Installer:** run `Emendia-<version>-windows-x64-setup.exe` to install for your Windows user, with shortcuts and an uninstaller. No administrator rights are required.
+   - Alternatively, [build Emendia](#building-on-windows) and run `target/release/emendia.exe`.
 2. Follow the setup assistant to choose your AI provider, model, languages and shortcuts.
 3. Select text in an editor or text field, press a shortcut, then release its keys.
 
 Click the tray icon to open Settings. Closing windows keeps Emendia running; choose **Quit** in the tray menu to exit.
+
+Release builds require Windows 10 version 1903 or newer (x64) and compatible graphics drivers. Both downloads use the same executable. Portable builds still store settings in your Windows user profile and API keys in Windows Credential Manager. `SHA256SUMS.txt` is available with each release to verify downloads.
 
 ## Default shortcuts
 
@@ -51,6 +56,7 @@ Run `target/release/emendia.exe`. See the [development guide](docs/development.m
 - [Usage](docs/usage.md): providers, previews, proofreading styles and preferences.
 - [Configuration and limitations](docs/configuration.md): data storage, privacy, migration and application integration.
 - [Development](docs/development.md): build environment, project layout and verification.
+- [Releases](docs/releasing.md): automated builds, portable and installer downloads, release notes and version tags.
 
 ## License
 

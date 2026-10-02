@@ -1,0 +1,41 @@
+[changelog]
+header = ""
+body = """
+## Downloads
+
+- **Portable:** download `Emendia-{{ version | default(value="unreleased") }}-windows-x64.exe` and run it directly.
+- **Installer:** download `Emendia-{{ version | default(value="unreleased") }}-windows-x64-setup.exe` for a per-user installation with shortcuts and an uninstaller. Administrator rights are not required.
+- **Checksums:** use `SHA256SUMS.txt` to verify the downloads.
+
+Both distributions use the same executable and require Windows 10 version 1903 or newer (x64) with compatible graphics drivers. Settings remain in your Windows user profile, and API keys remain in Windows Credential Manager.
+
+## Changes
+
+{% for group, commits in commits | group_by(attribute="group") -%}
+### {{ group | striptags | trim }}
+
+{% for commit in commits -%}
+- {% if commit.breaking %}**BREAKING:** {% endif %}{% if commit.scope %}**{{ commit.scope }}:** {% endif %}{{ commit.message | upper_first }}{% if commit.breaking_description %} — {{ commit.breaking_description }}{% endif %}
+{% endfor %}
+
+{% endfor %}
+"""
+trim = true
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+protect_breaking_commits = true
+filter_commits = false
+tag_pattern = '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
+use_branch_tags = true
+topo_order = false
+sort_commits = "oldest"
+commit_parsers = [
+  { field = "breaking", pattern = "true", group = "<!-- 0 -->Breaking Changes" },
+  { message = "^feat", group = "<!-- 1 -->Features" },
+  { message = "^fix", group = "<!-- 2 -->Bug Fixes" },
+  { message = "^perf", group = "<!-- 3 -->Performance" },
+  { message = "^(docs?|chore|ci|build|refactor|test|style)", group = "<!-- 4 -->Maintenance" },
+  { message = ".*", group = "<!-- 5 -->Other Changes" },
+]

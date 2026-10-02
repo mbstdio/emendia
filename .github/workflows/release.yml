@@ -1,0 +1,218 @@
+name: Build and release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Optional branch, tag or commit to build (never publishes a release)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event_name }}-${{ inputs.ref || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_TOOLCHAIN: '1.99.0'
+      # Keep the portable distribution self-contained (no Visual C++ redistributable).
+      RUSTFLAGS: '-C target-feature=+crt-static'
+    steps:
+      - name: Check out the requested version
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install $env:RUST_TOOLCHAIN --profile minimal --component rustfmt --component clippy
+          if ($LASTEXITCODE -ne 0) { throw 'Rust installation failed' }
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Validate version and choose filenames
+        id: version
+        env:
+          PUBLISH: ${{ github.event_name == 'push' }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $metadata = cargo "+$env:RUST_TOOLCHAIN" metadata --no-deps --locked --format-version 1
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to read Cargo metadata' }
+          $version = (($metadata | ConvertFrom-Json).packages | Where-Object name -eq 'emendia').version
+          $semver = '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?$'
+          if ($version -notmatch $semver) { throw "Unsupported release version: $version" }
+          if ($env:PUBLISH -eq 'true') {
+            if ($env:RELEASE_TAG -cne "v$version") { throw 'The tag must match the version in Cargo.toml' }
+            $label = $env:RELEASE_TAG
+          } else {
+            $commit = git rev-parse --short=8 HEAD
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to resolve the build commit' }
+            $label = "v$version-dev-$commit"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "label=$label" >> $env:GITHUB_OUTPUT
+          "prerelease=$($version.Contains('-').ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
+      - name: Select the exact release-note range
+        if: github.event_name == 'push'
+        id: notes
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $commit = git rev-parse HEAD
+          $describe = @('describe', '--tags', '--abbrev=0', '--match', 'v*', '--exclude', $env:RELEASE_TAG)
+          # Ignore non-version tags; describe searches only this commit's ancestry.
+          foreach ($tag in (git tag)) {
+            if ($tag -notmatch '^v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') {
+              $describe += @('--exclude', $tag)
+            }
+          }
+          $previous = git @describe HEAD 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            $previousCommit = git rev-parse "$previous^{commit}"
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to resolve the preceding version tag' }
+            $range = "$previousCommit..$commit"
+          } else {
+            $range = $commit
+            # A first release has no preceding tag; this is a successful fallback.
+            $global:LASTEXITCODE = 0
+          }
+          "range=$range" >> $env:GITHUB_OUTPUT
+
+      - name: Check formatting
+        run: cargo "+$env:RUST_TOOLCHAIN" fmt --check
+
+      - name: Run Clippy
+        run: cargo "+$env:RUST_TOOLCHAIN" clippy --all-targets --locked -- -D warnings
+
+      - name: Run tests
+        run: cargo "+$env:RUST_TOOLCHAIN" test --locked
+
+      - name: Build the Windows executable
+        run: cargo "+$env:RUST_TOOLCHAIN" build --release --locked
+
+      - name: Verify the portable executable has no external CRT dependency
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $dumpbin = Get-ChildItem "$vs/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe" | Sort-Object FullName | Select-Object -Last 1
+          if (-not $dumpbin) { throw 'MSVC dumpbin was not found' }
+          $dependencies = & $dumpbin.FullName /DEPENDENTS 'target/release/emendia.exe'
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect executable dependencies' }
+          if ($dependencies -match '(?i)(vcruntime|msvcp|ucrtbase|api-ms-win-crt-).*\.dll') {
+            throw 'The portable executable must statically link the Visual C++ runtime'
+          }
+
+      - name: Install Inno Setup
+        run: |
+          $installer = Join-Path $env:RUNNER_TEMP 'innosetup-6.7.3.exe'
+          $destination = Join-Path $env:RUNNER_TEMP 'inno-setup'
+          Invoke-WebRequest 'https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe' -OutFile $installer
+          $process = Start-Process $installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER', '/NOICONS', "/DIR=`"$destination`"" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'Inno Setup installation failed' }
+          $destination >> $env:GITHUB_PATH
+
+      - name: Package the portable executable and installer
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
+          BUILD_LABEL: ${{ steps.version.outputs.label }}
+        run: |
+          New-Item -ItemType Directory -Path 'target/dist' -Force | Out-Null
+          Copy-Item 'target/release/emendia.exe' "target/dist/Emendia-$env:BUILD_LABEL-windows-x64.exe"
+          $source = (Resolve-Path 'target/release/emendia.exe').Path
+          $output = (Resolve-Path 'target/dist').Path
+          ISCC "/DAppVersion=$env:APP_VERSION" "/DBuildLabel=$env:BUILD_LABEL" "/DSourceExe=$source" "/DOutputDir=$output" 'packaging/windows/emendia.iss'
+          if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed' }
+          Get-ChildItem 'target/dist/*.exe' | Sort-Object Name | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)"
+          } | Set-Content 'target/dist/SHA256SUMS.txt' -Encoding utf8NoBOM
+
+      - name: Verify installation, update and uninstall
+        env:
+          BUILD_LABEL: ${{ steps.version.outputs.label }}
+        run: |
+          ./packaging/windows/test-installer.ps1 -Installer "target/dist/Emendia-$env:BUILD_LABEL-windows-x64-setup.exe" -PortableExe "target/dist/Emendia-$env:BUILD_LABEL-windows-x64.exe"
+
+      - name: Save downloadable build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Emendia-${{ steps.version.outputs.label }}-windows-x64
+          path: target/dist/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+      - name: Generate release notes
+        if: github.event_name == 'push'
+        uses: orhun/git-cliff-action@v4
+        with:
+          version: v2.14.2
+          args: ${{ steps.notes.outputs.range }} --tag ${{ steps.version.outputs.label }} --output target/release-notes.md
+
+      - name: Save release notes for publication
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: target/release-notes.md
+          if-no-files-found: error
+
+    outputs:
+      label: ${{ steps.version.outputs.label }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+
+  publish:
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ github.ref_name }}
+      PRERELEASE: ${{ needs.build.outputs.prerelease }}
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v5
+        with:
+          name: Emendia-${{ needs.build.outputs.label }}-windows-x64
+          path: dist
+
+      - name: Download release notes
+        uses: actions/download-artifact@v5
+        with:
+          name: release-notes
+          path: notes
+
+      - name: Create or resume a draft and publish its assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft'); then
+            if [[ "$draft" != true ]]; then
+              echo "This release is already published; its assets will not be replaced."
+              exit 0
+            fi
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "Emendia $RELEASE_TAG" --notes-file notes/release-notes.md
+          fi
+          gh release edit "$RELEASE_TAG" --title "Emendia $RELEASE_TAG" --notes-file notes/release-notes.md --prerelease="$PRERELEASE"
+          gh release upload "$RELEASE_TAG" dist/* --clobber
+          gh release edit "$RELEASE_TAG" --draft=false
