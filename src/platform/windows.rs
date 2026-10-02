@@ -983,6 +983,24 @@ pub fn place_popup(anchor: Rect, area: Rect, width: f32, height: f32) -> (f32, f
     (x, y.clamp(area.top, (area.bottom - height).max(area.top)))
 }
 
+pub fn set_dark_titlebar(hwnd: isize, dark: bool) -> Result<()> {
+    use windows::Win32::{
+        Foundation::{BOOL, HWND},
+        Graphics::Dwm::{DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindowAttribute},
+    };
+    let enabled = BOOL::from(dark);
+    // The handle belongs to a live GPUI window; DWM reads the BOOL during this call.
+    unsafe {
+        DwmSetWindowAttribute(
+            HWND(hwnd as *mut std::ffi::c_void),
+            DWMWA_USE_IMMERSIVE_DARK_MODE,
+            (&enabled as *const BOOL).cast(),
+            std::mem::size_of::<BOOL>() as u32,
+        )?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

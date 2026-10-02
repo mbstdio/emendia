@@ -1,6 +1,7 @@
 pub mod preview;
 pub mod settings;
 pub mod status;
+pub mod theme;
 
 use gpui_kit::{
     component::{IndexPath, input::InputState, select::SelectState},

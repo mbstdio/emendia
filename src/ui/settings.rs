@@ -1,7 +1,7 @@
 use crate::{
     app::Controller,
     platform::hotkey::{self, TranslationMode},
-    settings::{self, CorrectionStyle, Settings},
+    settings::{self, CorrectionStyle, Settings, ThemePreference},
     ui::{LanguageSelect, language_select, style_select, text_input},
 };
 use anyhow::{Context as _, Result};
@@ -19,6 +19,56 @@ use tokio::task::AbortHandle;
 
 const PROVIDERS: &[&str] = &["OpenAI", "LM Studio", "Ollama", "Personnalisé"];
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Category {
+    General,
+    Provider,
+    Translation,
+    Correction,
+    Shortcuts,
+}
+
+impl Category {
+    const ALL: [Self; 5] = [
+        Self::General,
+        Self::Provider,
+        Self::Translation,
+        Self::Correction,
+        Self::Shortcuts,
+    ];
+
+    fn title(self) -> &'static str {
+        match self {
+            Self::General => "Général",
+            Self::Provider => "Provider IA",
+            Self::Translation => "Traduction",
+            Self::Correction => "Correction",
+            Self::Shortcuts => "Raccourcis",
+        }
+    }
+
+    fn description(self) -> &'static str {
+        match self {
+            Self::General => "Personnalise l’apparence et le démarrage de l’application.",
+            Self::Provider => "Configure le modèle utilisé pour traduire et corriger tes textes.",
+            Self::Translation => "Choisis les langues et les raccourcis de traduction.",
+            Self::Correction => "Adapte le style de correction et ses raccourcis.",
+            Self::Shortcuts => "Retrouve tous tes raccourcis globaux au même endroit.",
+        }
+    }
+
+    fn icon(self) -> gpui_kit::assets::IconName {
+        use gpui_kit::assets::IconName;
+        match self {
+            Self::General => IconName::Settings,
+            Self::Provider => IconName::Server,
+            Self::Translation => IconName::Languages,
+            Self::Correction => IconName::SpellCheck,
+            Self::Shortcuts => IconName::Keyboard,
+        }
+    }
+}
+
 pub struct SettingsView {
     controller: WeakEntity<Controller>,
     provider: Entity<SelectState<Vec<String>>>,
@@ -34,6 +84,9 @@ pub struct SettingsView {
     style: LanguageSelect,
     quick_style: LanguageSelect,
     launch_at_startup: bool,
+    theme: LanguageSelect,
+    theme_preference: ThemePreference,
+    category: Category,
     recording: Option<TranslationMode>,
     focus: FocusHandle,
     pub status: String,
@@ -85,7 +138,56 @@ impl SettingsView {
         let target = language_select(&settings.target_language, false, window, cx);
         let style = style_select(settings.correction_style, window, cx);
         let quick_style = style_select(settings.quick_correction_style, window, cx);
+        let theme = cx.new(|cx| {
+            SelectState::new(
+                ThemePreference::ALL
+                    .into_iter()
+                    .map(|theme| theme.label().to_owned())
+                    .collect::<Vec<_>>(),
+                ThemePreference::ALL
+                    .iter()
+                    .position(|theme| *theme == settings.theme)
+                    .map(IndexPath::new),
+                window,
+                cx,
+            )
+        });
         let mut subscriptions = vec![
+            cx.subscribe_in(
+                &theme,
+                window,
+                |this, _, event: &SelectEvent<Vec<String>>, window, cx| {
+                    if let SelectEvent::Confirm(Some(label)) = event {
+                        let Some(theme) = ThemePreference::from_label(label) else {
+                            return;
+                        };
+                        if theme == this.theme_preference {
+                            return;
+                        }
+                        match this
+                            .controller
+                            .update(cx, |app, cx| app.set_theme(theme, cx))
+                            .and_then(|result| result)
+                        {
+                            Ok(()) => {
+                                this.theme_preference = theme;
+                                this.status = "Thème appliqué et enregistré.".into();
+                            }
+                            Err(error) => {
+                                let index = ThemePreference::ALL
+                                    .iter()
+                                    .position(|theme| *theme == this.theme_preference)
+                                    .map(IndexPath::new);
+                                this.theme.update(cx, |state, cx| {
+                                    state.set_selected_index(index, window, cx)
+                                });
+                                this.status = error.to_string();
+                            }
+                        }
+                        cx.notify();
+                    }
+                },
+            ),
             cx.subscribe_in(
                 &provider,
                 window,
@@ -161,6 +263,9 @@ impl SettingsView {
             style,
             quick_style,
             launch_at_startup: settings.launch_at_startup,
+            theme,
+            theme_preference: settings.theme,
+            category: Category::General,
             recording: None,
             focus: cx.focus_handle(),
             status: error.or(key_error).unwrap_or_else(|| {
@@ -237,6 +342,7 @@ impl SettingsView {
                 .and_then(|s| CorrectionStyle::from_label(s))
                 .context("Choisis le mode de Quick Check")?,
             launch_at_startup: self.launch_at_startup,
+            theme: self.theme_preference,
         };
         settings.validate()?;
         settings.validate_hotkeys()?;
@@ -381,61 +487,227 @@ impl Drop for SettingsView {
 
 impl Render for SettingsView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().size_full().bg(cx.theme().background).text_color(cx.theme().foreground).p_5().gap_4()
+        let mut sidebar = v_flex()
+            .w(px(200.))
+            .flex_shrink_0()
+            .p_3()
+            .gap_1()
+            .border_r_1()
+            .border_color(cx.theme().border)
+            .child(
+                div()
+                    .px_3()
+                    .py_4()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("PARAMÈTRES"),
+            );
+        for category in Category::ALL {
+            let selected = self.category == category;
+            sidebar = sidebar.child(
+                Button::new(("category-nav", category as usize))
+                    .ghost()
+                    .w_full()
+                    .justify_start()
+                    .icon(Icon::new(category.icon()).size_4())
+                    .label(category.title())
+                    .selected(selected)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.category = category;
+                        if this.recording.take().is_some() {
+                            this.status = "Capture du raccourci annulée.".into();
+                        }
+                        cx.notify();
+                    })),
+            );
+        }
+        let mut fields = v_flex().gap_4();
+        match self.category {
+            Category::General => {
+                fields = fields
+                    .child(section("Apparence", "Le thème s’applique à toutes les fenêtres de l’application.", cx))
+                    .child(field("Thème", Select::new(&self.theme).w_full()))
+                    .child(hint("Le choix est enregistré immédiatement. Système suit le thème de Windows.", cx))
+                    .child(section("Démarrage", "Retrouve l’application dans la zone de notification.", cx))
+                    .child(Checkbox::new("launch-at-startup").label("Lancer au démarrage de Windows").checked(self.launch_at_startup)
+                        .on_click(cx.listener(|this, checked, _, cx| { this.launch_at_startup = *checked; cx.notify(); })))
+                    .child(hint("Enregistre pour appliquer cette option. L’application démarre dans le tray à l’ouverture de ta session.", cx))
+                    .child(hint("Fermer les fenêtres laisse l’application dans le tray. Pour arrêter : tray → Quitter.", cx));
+            }
+            Category::Provider => {
+                fields = fields
+                    .child(field("Provider", Select::new(&self.provider).w_full()))
+                    .child(field("URL de base", Input::new(&self.base_url)))
+                    .child(hint("Avec /v1, sans /chat/completions.", cx))
+                    .child(field("Modèle", Input::new(&self.model)))
+                    .child(field("Clé API", Input::new(&self.api_key)))
+                    .child(hint("Enregistrée dans le gestionnaire d’identifiants Windows. Facultative pour un serveur local.", cx))
+                    .child(Button::new("test").label(if self.testing { "Test en cours…" } else { "Tester la connexion" }).disabled(self.testing)
+                        .on_click(cx.listener(|this, _, window, cx| this.test(window, cx))));
+            }
+            Category::Translation => {
+                fields = fields
+                    .child(section("Langues par défaut", "Ces langues restent modifiables dans l’aperçu.", cx))
+                    .child(field("Langue source", Select::new(&self.source).w_full()))
+                    .child(field("Langue cible", Select::new(&self.target).w_full()))
+                    .child(section("Avec aperçu", "Vérifie ou édite la traduction avant de remplacer le texte.", cx))
+                    .child(self.shortcut(TranslationMode::Preview, cx))
+                    .child(section("Quick Translate", "Traduit et remplace directement la sélection en arrière-plan, avec les langues et le provider enregistrés.", cx))
+                    .child(self.shortcut(TranslationMode::Quick, cx));
+            }
+            Category::Correction => {
+                fields = fields
+                    .child(hint("La correction conserve la langue du texte. Le mode fidèle préserve le ton et les formulations ; les autres modes adaptent le style sans changer le sens.", cx))
+                    .child(section("Avec aperçu", "Vérifie ou édite la correction avant de remplacer le texte.", cx))
+                    .child(field("Mode par défaut", Select::new(&self.style).w_full()))
+                    .child(self.shortcut(TranslationMode::CorrectionPreview, cx))
+                    .child(section("Quick Check", "Corrige et remplace directement la sélection en arrière-plan.", cx))
+                    .child(field("Mode par défaut", Select::new(&self.quick_style).w_full()))
+                    .child(self.shortcut(TranslationMode::CorrectionQuick, cx));
+            }
+            Category::Shortcuts => {
+                fields = fields
+                    .child(section("Traduction", "Avec aperçu ou remplacement direct avec Quick Translate.", cx))
+                    .child(field("Avec aperçu", self.shortcut(TranslationMode::Preview, cx)))
+                    .child(field("Quick Translate", self.shortcut(TranslationMode::Quick, cx)))
+                    .child(section("Correction", "Avec aperçu ou remplacement direct avec Quick Check.", cx))
+                    .child(field("Avec aperçu", self.shortcut(TranslationMode::CorrectionPreview, cx)))
+                    .child(field("Quick Check", self.shortcut(TranslationMode::CorrectionQuick, cx)))
+                    .child(hint("Les raccourcis sont partagés avec les rubriques Traduction et Correction. Ils doivent être distincts. Enregistre pour les activer.", cx));
+            }
+        }
+        h_flex()
+            .size_full()
+            .items_stretch()
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground)
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, event, _, cx| this.record(event, cx)))
-            .child(div().text_xl().font_weight(FontWeight::BOLD).child("Translation Tool"))
-            .child(div().text_sm().text_color(cx.theme().muted_foreground).child("Sélectionne un texte → hotkey → vérifie la traduction → remplace."))
-            .child(v_flex().id("settings-fields").flex_1().min_h(px(0.)).overflow_y_scroll().gap_3()
-                .child(div().text_sm().child("Provider"))
-                .child(Select::new(&self.provider).w_full())
-                .child(div().text_sm().child("URL de base (avec /v1, sans /chat/completions)"))
-                .child(Input::new(&self.base_url))
-                .child(div().text_sm().child("Modèle"))
-                .child(Input::new(&self.model))
-                .child(div().text_sm().child("Clé API — enregistrée dans le gestionnaire d’identifiants Windows"))
-                .child(Input::new(&self.api_key))
-                .child(div().text_sm().child("Langues par défaut (modifiables dans l’aperçu)"))
-                .child(h_flex().gap_2()
-                    .child(Select::new(&self.source).title_prefix("Source : ").flex_1())
-                    .child(Select::new(&self.target).title_prefix("Cible : ").flex_1()))
-                .child(div().text_sm().child("Raccourci global — aperçu avec validation"))
-                .child(h_flex().gap_3()
-                    .child(div().flex_1().child(self.hotkey.clone()))
-                    .child(Button::new("record").label(if self.recording == Some(TranslationMode::Preview) { "Appuie sur le raccourci…" } else { "Changer le raccourci" })
-                        .on_click(cx.listener(|this, _, window, cx| { this.recording = Some(TranslationMode::Preview); this.focus.focus(window, cx); this.status = "Appuie sur la combinaison souhaitée (Échap pour annuler).".into(); cx.notify(); }))))
-                .child(div().text_sm().child("Raccourci global — Quick Translate"))
-                .child(h_flex().gap_3()
-                    .child(div().flex_1().child(self.quick_hotkey.clone()))
-                    .child(Button::new("record-quick").label(if self.recording == Some(TranslationMode::Quick) { "Appuie sur le raccourci…" } else { "Changer le raccourci" })
-                        .on_click(cx.listener(|this, _, window, cx| { this.recording = Some(TranslationMode::Quick); this.focus.focus(window, cx); this.status = "Appuie sur la combinaison souhaitée (Échap pour annuler).".into(); cx.notify(); }))))
-                .child(div().text_sm().text_color(cx.theme().muted_foreground).child("Quick Translate remplace directement la sélection en arrière-plan, avec les langues et le provider enregistrés ci-dessus."))
-                .child(div().text_sm().child("Correction — modes par défaut (dans la langue du texte)"))
-                .child(Select::new(&self.style).title_prefix("Aperçu : ").w_full())
-                .child(Select::new(&self.quick_style).title_prefix("Quick Check : ").w_full())
-                .child(div().text_sm().child("Correction fidèle conserve le ton et les formulations ; les autres modes adaptent le style sans changer le sens."))
-                .child(div().text_sm().child("Raccourci global — correction avec aperçu"))
-                .child(h_flex().gap_3()
-                    .child(div().flex_1().child(self.correction_hotkey.clone()))
-                    .child(Button::new("record-correction").label(if self.recording == Some(TranslationMode::CorrectionPreview) { "Appuie sur le raccourci…" } else { "Changer le raccourci" })
-                        .on_click(cx.listener(|this, _, window, cx| { this.recording = Some(TranslationMode::CorrectionPreview); this.focus.focus(window, cx); this.status = "Appuie sur la combinaison souhaitée (Échap pour annuler).".into(); cx.notify(); }))))
-                .child(div().text_sm().child("Raccourci global — Quick Check"))
-                .child(h_flex().gap_3()
-                    .child(div().flex_1().child(self.quick_correction_hotkey.clone()))
-                    .child(Button::new("record-quick-correction").label(if self.recording == Some(TranslationMode::CorrectionQuick) { "Appuie sur le raccourci…" } else { "Changer le raccourci" })
-                        .on_click(cx.listener(|this, _, window, cx| { this.recording = Some(TranslationMode::CorrectionQuick); this.focus.focus(window, cx); this.status = "Appuie sur la combinaison souhaitée (Échap pour annuler).".into(); cx.notify(); }))))
-                .child(div().text_sm().text_color(cx.theme().muted_foreground).child("Les parcours rapides affichent leur état sans prendre le focus, puis remplacent directement la sélection."))
-                .child(Checkbox::new("launch-at-startup").label("Lancer au démarrage de Windows").checked(self.launch_at_startup)
-                    .on_click(cx.listener(|this, checked, _, cx| { this.launch_at_startup = *checked; cx.notify(); })))
-                .child(div().text_sm().text_color(cx.theme().muted_foreground).child("Ouvre l’application dans le tray à l’ouverture de ta session. Enregistre pour appliquer cette option."))
-                .child(div().text_sm().text_color(cx.theme().muted_foreground).child("Fermer les fenêtres laisse l’application dans le tray. Pour arrêter : tray → Quitter.")))
-            .child(div().text_sm().max_h(px(100.)).id("settings-status").overflow_y_scroll().child(self.status.clone()))
-            .child(h_flex().gap_2()
-                .child(Button::new("test").label(if self.testing { "Test en cours…" } else { "Tester la connexion" }).disabled(self.testing)
-                    .on_click(cx.listener(|this, _, window, cx| this.test(window, cx))))
-                .child(div().flex_1())
-                .child(Button::new("close").ghost().label("Fermer").on_click(|_, window, _| window.remove_window()))
-                .child(Button::new("save").primary().label("Enregistrer").disabled(self.recording.is_some())
-                    .on_click(cx.listener(|this, _, _, cx| this.save(cx)))))
+            .child(sidebar)
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .p_6()
+                    .gap_4()
+                    .child(
+                        v_flex()
+                            .gap_2()
+                            .pb_4()
+                            .border_b_1()
+                            .border_color(cx.theme().border)
+                            .child(
+                                div()
+                                    .text_xl()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(self.category.title()),
+                            )
+                            .child(hint(self.category.description(), cx)),
+                    )
+                    .child(
+                        v_flex()
+                            .id(("category-content", self.category as usize))
+                            .flex_1()
+                            .min_h(px(0.))
+                            .overflow_y_scroll()
+                            .child(fields),
+                    )
+                    .child(
+                        v_flex()
+                            .flex_shrink_0()
+                            .pt_4()
+                            .gap_3()
+                            .border_t_1()
+                            .border_color(cx.theme().border)
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .max_h(px(80.))
+                                    .id("settings-status")
+                                    .overflow_y_scroll()
+                                    .child(self.status.clone()),
+                            )
+                            .child(
+                                h_flex()
+                                    .justify_end()
+                                    .gap_2()
+                                    .child(
+                                        Button::new("close")
+                                            .ghost()
+                                            .label("Fermer")
+                                            .on_click(|_, window, _| window.remove_window()),
+                                    )
+                                    .child(
+                                        Button::new("save")
+                                            .primary()
+                                            .label("Enregistrer")
+                                            .disabled(self.recording.is_some())
+                                            .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
+                                    ),
+                            ),
+                    ),
+            )
     }
+}
+
+impl SettingsView {
+    fn shortcut(&self, mode: TranslationMode, cx: &mut Context<Self>) -> impl IntoElement {
+        let (id, value) = match mode {
+            TranslationMode::Preview => ("record", &self.hotkey),
+            TranslationMode::Quick => ("record-quick", &self.quick_hotkey),
+            TranslationMode::CorrectionPreview => ("record-correction", &self.correction_hotkey),
+            TranslationMode::CorrectionQuick => {
+                ("record-quick-correction", &self.quick_correction_hotkey)
+            }
+        };
+        h_flex()
+            .gap_3()
+            .justify_between()
+            .child(
+                div()
+                    .px_3()
+                    .py_2()
+                    .rounded_md()
+                    .bg(cx.theme().secondary)
+                    .text_sm()
+                    .child(value.clone()),
+            )
+            .child(
+                Button::new(id)
+                    .label(if self.recording == Some(mode) {
+                        "Appuie sur le raccourci…"
+                    } else {
+                        "Changer le raccourci"
+                    })
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.recording = Some(mode);
+                        this.focus.focus(window, cx);
+                        this.status =
+                            "Appuie sur la combinaison souhaitée (Échap pour annuler).".into();
+                        cx.notify();
+                    })),
+            )
+    }
+}
+
+fn field(label: &'static str, control: impl IntoElement) -> impl IntoElement {
+    v_flex()
+        .gap_2()
+        .child(div().text_sm().child(label))
+        .child(control)
+}
+
+fn hint(text: &'static str, cx: &App) -> impl IntoElement {
+    div()
+        .text_sm()
+        .text_color(cx.theme().muted_foreground)
+        .child(text)
+}
+
+fn section(title: &'static str, description: &'static str, cx: &App) -> impl IntoElement {
+    v_flex()
+        .gap_1()
+        .pt_2()
+        .child(div().font_weight(FontWeight::SEMIBOLD).child(title))
+        .child(hint(description, cx))
 }

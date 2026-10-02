@@ -23,6 +23,31 @@ pub const LANGUAGES: &[&str] = &[
 pub const AUTO: &str = "Automatique";
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemePreference {
+    Light,
+    Dark,
+    #[default]
+    System,
+}
+
+impl ThemePreference {
+    pub const ALL: [Self; 3] = [Self::Light, Self::Dark, Self::System];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Light => "Clair",
+            Self::Dark => "Sombre",
+            Self::System => "Système",
+        }
+    }
+
+    pub fn from_label(label: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|theme| theme.label() == label)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum CorrectionStyle {
     #[default]
     Faithful,
@@ -118,6 +143,7 @@ pub struct Settings {
     pub correction_style: CorrectionStyle,
     pub quick_correction_style: CorrectionStyle,
     pub launch_at_startup: bool,
+    pub theme: ThemePreference,
 }
 
 impl Default for Settings {
@@ -134,6 +160,7 @@ impl Default for Settings {
             correction_style: CorrectionStyle::Faithful,
             quick_correction_style: CorrectionStyle::Faithful,
             launch_at_startup: false,
+            theme: ThemePreference::System,
         }
     }
 }
@@ -212,6 +239,18 @@ impl SettingsStore {
     pub fn save(&self, settings: &Settings) -> Result<()> {
         settings.validate()?;
         settings.validate_hotkeys()?;
+        self.write(settings)
+    }
+
+    pub fn save_theme(&self, saved: &Settings, theme: ThemePreference) -> Result<Settings> {
+        let mut next = saved.clone();
+        next.theme = theme;
+        // Appearance must remain editable while repairing an invalid provider or shortcut.
+        self.write(&next)?;
+        Ok(next)
+    }
+
+    fn write(&self, settings: &Settings) -> Result<()> {
         fs::create_dir_all(
             self.path
                 .parent()
@@ -265,6 +304,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn theme_only_save_preserves_settings_awaiting_repair() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SettingsStore {
+            path: dir.path().join("settings.json"),
+        };
+        let saved = Settings {
+            model: String::new(),
+            hotkey: "invalid".into(),
+            ..Settings::default()
+        };
+        assert!(store.save(&saved).is_err());
+        let next = store.save_theme(&saved, ThemePreference::Dark).unwrap();
+        assert_eq!(
+            next,
+            Settings {
+                theme: ThemePreference::Dark,
+                ..saved.clone()
+            }
+        );
+        assert_eq!(store.load().unwrap().unwrap(), next);
+        assert_eq!(saved.theme, ThemePreference::System);
+    }
+
+    #[test]
     fn configuration_round_trip_and_missing_file() {
         let dir = tempfile::tempdir().unwrap();
         let store = SettingsStore {
@@ -275,6 +338,7 @@ mod tests {
         store.save(&settings).unwrap();
         settings.source_language = "Français".into();
         settings.launch_at_startup = true;
+        settings.theme = ThemePreference::Dark;
         store.save(&settings).unwrap();
         assert_eq!(store.load().unwrap().unwrap(), settings);
         assert!(
@@ -323,6 +387,7 @@ mod tests {
         assert_eq!(settings.correction_style, CorrectionStyle::Faithful);
         assert_eq!(settings.quick_correction_style, CorrectionStyle::Faithful);
         assert!(!settings.launch_at_startup);
+        assert_eq!(settings.theme, ThemePreference::System);
         assert_eq!(settings.hotkey, "Ctrl+Alt+KeyY");
         assert_eq!(settings.source_language, "Allemand");
         assert_eq!(settings.target_language, "Français");

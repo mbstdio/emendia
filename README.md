@@ -19,6 +19,8 @@ Sélectionner un texte → **Ctrl+F12** pour traduire ou **Ctrl+F11** pour corri
 - Configuration JSON locale et clés API séparées par endpoint dans le gestionnaire d’identifiants Windows.
 - Icône tray : paramètres, activation/désactivation de la hotkey, quitter. Fermer toutes les fenêtres n’arrête pas le processus.
 - Option pour lancer l’application dans le tray à l’ouverture de session Windows, désactivée par défaut.
+- Paramètres organisés en cinq catégories avec navigation latérale : **Général**, **Provider IA**, **Traduction**, **Correction** et **Raccourcis**.
+- Thèmes **Clair**, **Sombre** et **Système** (défaut), appliqués et enregistrés immédiatement pour toutes les fenêtres.
 
 ## Prérequis Windows
 
@@ -76,6 +78,14 @@ cargo build --release --locked
 Exécutable : **`target/release/translation-tool.exe`**. Cette première version fournit un exécutable, pas encore un installateur.
 
 Pour le lancement automatique, cocher **Lancer au démarrage de Windows** dans les paramètres puis **Enregistrer**. L’application démarre dans le tray à l’ouverture de la session de l’utilisateur courant, sans droits administrateur. Décocher puis enregistrer retire le lancement automatique. L’option utilise l’entrée `TranslationTool` dans `HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run`, avec le chemin de l’exécutable courant. Après déplacement de l’exécutable, enregistrer à nouveau depuis son nouvel emplacement. Pour éviter une console au démarrage, activer l’option depuis la build release.
+
+## Paramètres et apparence
+
+La navigation latérale regroupe les réglages par catégorie. Les modifications du formulaire sont conservées lors des changements de rubrique. Les boutons **Fermer** et **Enregistrer** restent accessibles en bas de la page.
+
+Dans **Général**, le choix **Clair / Sombre / Système** est appliqué et enregistré immédiatement, indépendamment des autres modifications du formulaire. **Système** suit le thème de Windows, y compris ses changements pendant l’exécution. Les anciennes configurations utilisent ce mode par défaut.
+
+Les raccourcis sont éditables dans **Traduction** et **Correction**, ainsi que dans la rubrique centralisée **Raccourcis**. Ces emplacements partagent les mêmes valeurs ; cliquer sur **Enregistrer** active les changements. Le bouton **Tester la connexion** se trouve dans **Provider IA**.
 
 ## Configurer le provider
 
@@ -216,6 +226,8 @@ Tests manuels de bout en bout recommandés :
 - État : vérifier capture, traitement, remplacement et confirmation brève ; cliquer sur la fenêtre pendant un parcours rapide et vérifier que le document conserve le focus ; tester une erreur persistante et sa fermeture.
 - Raccourcis : configurer quatre combinaisons distinctes, les échanger, tester un conflit et activer/désactiver les quatre depuis le tray.
 - Démarrage Windows : cocher l’option et enregistrer, rouvrir les paramètres puis vérifier le lancement dans le tray après une nouvelle ouverture de session ; décocher et enregistrer pour vérifier sa suppression.
+- Paramètres : changer de catégorie avec des champs modifiés, vérifier leur conservation et la synchronisation des raccourcis entre les rubriques.
+- Thème : choisir Clair puis Sombre avec un aperçu ouvert, vérifier toutes les fenêtres et la persistance après redémarrage ; choisir Système puis changer l’apparence Windows. Modifier un autre champ avant de changer le thème et fermer sans enregistrer : seul le thème doit être conservé.
 - Champ éditable du navigateur et éditeur de code : vérifier le retour de focus.
 - Changer la sélection ou le document pendant l’aperçu : le remplacement doit être refusé si le changement est détecté.
 - Changer rapidement de langue puis fermer l’aperçu : aucune ancienne réponse ne doit rouvrir la fenêtre.

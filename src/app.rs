@@ -5,7 +5,7 @@ use crate::{
         tray::Tray,
         windows::{self, Selection},
     },
-    settings::{self, Operation, Settings, SettingsStore},
+    settings::{self, Operation, Settings, SettingsStore, ThemePreference},
     translation::Translator,
     ui::{preview::Preview, settings::SettingsView, status::StatusView},
 };
@@ -127,6 +127,7 @@ impl Controller {
         initial_error: Option<String>,
         cx: &mut Context<Self>,
     ) {
+        crate::ui::theme::apply(self.settings.theme, cx);
         let error = self
             .hotkey
             .change(self.settings.shortcuts())
@@ -311,6 +312,7 @@ impl Controller {
         };
         let controller = cx.entity().downgrade();
         match gpui_kit::open_window(options, cx, |window, cx| {
+            crate::ui::theme::configure_window(window, cx);
             let view = cx.new(|_| StatusView::new(operation, controller));
             let weak = view.downgrade();
             window.on_window_should_close(cx, move |_, cx| {
@@ -461,6 +463,7 @@ impl Controller {
         let runtime = self.runtime.handle().clone();
         let smoke_layout_check = self.smoke_layout_check;
         match gpui_kit::open_window(options, cx, |window, cx| {
+            crate::ui::theme::configure_window(window, cx);
             cx.new(|cx| {
                 Preview::new(
                     selection,
@@ -515,15 +518,16 @@ impl Controller {
         let settings = self.settings.clone();
         let controller = cx.entity().downgrade();
         let options = WindowOptions {
-            window_bounds: Some(WindowBounds::centered(size(px(650.), px(680.)), cx)),
+            window_bounds: Some(WindowBounds::centered(size(px(860.), px(680.)), cx)),
             titlebar: Some(TitlebarOptions {
                 title: Some("Translation Tool — Paramètres".into()),
                 ..Default::default()
             }),
-            window_min_size: Some(size(px(480.), px(500.))),
+            window_min_size: Some(size(px(720.), px(500.))),
             ..Default::default()
         };
         match gpui_kit::open_window(options, cx, |window, cx| {
+            crate::ui::theme::configure_window(window, cx);
             cx.new(|cx| SettingsView::new(settings, controller, error, window, cx))
         }) {
             Ok((window, view)) => self.settings_window = Some((window, view.downgrade())),
@@ -547,6 +551,12 @@ impl Controller {
         })?;
         self.settings = next;
         self.tray.enabled.set_checked(true);
+        Ok(())
+    }
+
+    pub fn set_theme(&mut self, theme: ThemePreference, cx: &mut Context<Self>) -> Result<()> {
+        self.settings = self.store.save_theme(&self.settings, theme)?;
+        crate::ui::theme::apply(theme, cx);
         Ok(())
     }
 }
