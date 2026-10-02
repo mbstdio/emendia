@@ -75,7 +75,7 @@ fn run() -> Result<()> {
         .build()?;
     let translator = Translator::new()?;
     gpui_kit::application()
-        .with_assets(gpui_kit::assets::Assets)
+        .with_assets(gpui_kit::assets::AllAssets)
         .run(move |cx| {
             gpui_kit::init(cx);
             cx.set_quit_mode(QuitMode::Explicit);

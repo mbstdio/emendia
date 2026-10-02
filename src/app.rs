@@ -558,6 +558,9 @@ impl Controller {
             return;
         }
         let settings = self.settings.clone();
+        let provider_configured = self.store.load().is_ok_and(|saved| {
+            saved.is_some_and(|settings| settings.validate().is_ok())
+        });
         let controller = cx.entity().downgrade();
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::centered(size(px(860.), px(680.)), cx)),
@@ -570,7 +573,9 @@ impl Controller {
         };
         match gpui_kit::open_window(options, cx, |window, cx| {
             crate::ui::theme::configure_window(window, cx);
-            cx.new(|cx| SettingsView::new(settings, controller, error, window, cx))
+            cx.new(|cx| {
+                SettingsView::new(settings, controller, error, provider_configured, window, cx)
+            })
         }) {
             Ok((window, view)) => self.settings_window = Some((window, view.downgrade())),
             Err(error) => tracing::error!(%error, "Unable to open settings"),

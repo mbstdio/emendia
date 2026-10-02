@@ -104,6 +104,7 @@ impl SettingsView {
         settings: Settings,
         controller: WeakEntity<Controller>,
         error: Option<String>,
+        provider_configured: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -327,7 +328,11 @@ impl SettingsView {
             recording: None,
             focus: cx.focus_handle(),
             status: error.or(key_error).unwrap_or_else(|| {
-                t("Configure the provider, then test the connection and save.").into()
+                if provider_configured {
+                    String::new()
+                } else {
+                    t("Configure the provider, then test the connection and save.").into()
+                }
             }),
             testing: false,
             pending: None,
@@ -555,8 +560,15 @@ impl Render for SettingsView {
                     .ghost()
                     .w_full()
                     .justify_start()
-                    .icon(Icon::new(category.icon()).size_4())
-                    .label(category.title())
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .items_center()
+                            .justify_start()
+                            .gap_2()
+                            .child(Icon::new(category.icon()).size_4().flex_shrink_0())
+                            .child(category.title()),
+                    )
                     .selected(selected)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.category = category;
@@ -818,4 +830,22 @@ fn section(title: &'static str, description: &'static str, cx: &App) -> impl Int
         .pt_2()
         .child(div().font_weight(FontWeight::SEMIBOLD).child(t(title)))
         .child(hint(description, cx))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Category;
+    use gpui_kit::AssetSource;
+
+    #[test]
+    fn category_icons_are_available() {
+        let assets = gpui_kit::assets::AllAssets;
+        for category in Category::ALL {
+            let path = category.icon().path();
+            assert!(
+                assets.load(path.as_ref()).is_ok_and(|asset| asset.is_some()),
+                "Missing category icon: {path}"
+            );
+        }
+    }
 }
