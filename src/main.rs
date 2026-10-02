@@ -102,8 +102,18 @@ fn run() -> Result<()> {
                                 tracing::info!(
                                 "Smoke test GPUI : paramètres, aperçu traduit, tray et boucle d’événements actifs"
                                 );
-                                cx.quit();
-                            });
+                                 if !smoke_quick {
+                                     cx.quit();
+                                 }
+                             });
+                             if smoke_quick {
+                                 cx.background_executor().timer(std::time::Duration::from_secs(4)).await;
+                                 cx.update(|cx| {
+                                     assert!(cx.global::<AppController>()._controller.read(cx).smoke_status_closed(), "La popup d’erreur doit se fermer automatiquement");
+                                     assert!(cx.global::<AppController>()._controller.read(cx).smoke_preview_complete(cx), "Le résultat doit rester disponible après fermeture de la popup d’erreur");
+                                     cx.quit();
+                                 });
+                             }
                         })
                         .detach();
                     }

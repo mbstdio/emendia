@@ -134,11 +134,11 @@ Configuration : `%APPDATA%\TranslationTool\TranslationTool\config\settings.json`
 
 Les paramètres enregistrés sont figés au déclenchement. Pendant la capture ou un traitement rapide, les nouveaux déclenchements sont ignorés. Si un aperçu est déjà ouvert, chacun des quatre raccourcis le remet au premier plan.
 
-Après le remplacement, une confirmation apparaît pendant deux secondes puis disparaît. Une erreur de capture ou de traitement reste visible dans la fenêtre d’état, avec **Paramètres** et **Fermer**. Si le remplacement échoue (sélection modifiée, changement de fenêtre, etc.), l’aperçu s’ouvre avec le résultat déjà obtenu et l’erreur, pour permettre **Copier** ou un remplacement manuel sans nouvelle requête. Les parcours rapides ne reprennent pas le focus d’une autre application pour coller. Après un remplacement réussi, le résultat reste dans le presse-papiers.
+Après le remplacement, une confirmation apparaît pendant deux secondes puis disparaît. Une erreur de capture, de traitement ou de remplacement reste visible pendant cinq secondes dans la fenêtre d’état, avec **Paramètres** et **Fermer**, puis disparaît automatiquement. Le message revient à la ligne et la hauteur de la fenêtre s’adapte au contenu ; les messages longs restent accessibles par défilement. Si le remplacement échoue (sélection modifiée, changement de fenêtre, etc.), l’aperçu s’ouvre avec le résultat déjà obtenu et l’erreur, pour permettre **Copier** ou un remplacement manuel sans nouvelle requête. Cet aperçu reste disponible après la disparition de la fenêtre d’état. Les parcours rapides ne reprennent pas le focus d’une autre application pour coller. Après un remplacement réussi, le résultat reste dans le presse-papiers.
 
 ### Correction et Quick Check
 
-**Ctrl+F11** ouvre un aperçu de correction. Le sélecteur **Mode** remplace les sélecteurs de langues : la correction détecte la langue du texte et ne traduit pas. Changer de mode annule la requête précédente et repart du texte original. Le résultat peut être édité, copié ou remplacé ; **Nouvelle proposition** demande une nouvelle révision sans imposer de reformulations inutiles en mode fidèle. Échap ou **Annuler** ferme l’aperçu et annule la requête.
+**Ctrl+F11** ouvre un aperçu de correction. Un groupe de petits boutons **Fidèle / Fluide / Pro / Décontracté / Concis** remplace les sélecteurs de langues ; le mode actif est mis en évidence et les infobulles affichent les noms complets. Les paramètres utilisent les mêmes boutons pour les modes par défaut. La correction détecte la langue du texte et ne traduit pas. Changer de mode annule la requête précédente et repart du texte original. Le résultat peut être édité, copié ou remplacé ; **Nouvelle proposition** demande une nouvelle révision sans imposer de reformulations inutiles en mode fidèle. Échap ou **Annuler** ferme l’aperçu et annule la requête.
 
 | Mode | Comportement |
 |---|---|
@@ -154,7 +154,7 @@ Les paramètres définissent indépendamment le mode par défaut de l’aperçu 
 
 ### Intégration avec les autres applications
 
-La capture et le remplacement utilisent les conventions `Ctrl+C` et `Ctrl+V`. Avant de remplacer, l’application vérifie la fenêtre, le processus, le titre du document, le contrôle actif et le texte sélectionné. Lorsque UI Automation l’expose, elle vérifie aussi l’identifiant du contrôle et la position de la sélection dans le document.
+La capture et le remplacement utilisent les conventions `Ctrl+C` et `Ctrl+V`. Avant de remplacer, l’application vérifie la fenêtre, le processus, le titre du document, le contrôle actif et le texte sélectionné. Les différentes représentations des retours à la ligne (CR, LF et CRLF), notamment entre le moteur Word d’Outlook Classic et le presse-papiers, sont considérées comme équivalentes ; les autres caractères et le nombre de paragraphes restent vérifiés. Lorsque UI Automation l’expose, elle vérifie aussi l’identifiant du contrôle et la position de la sélection dans le document.
 
 La capture sauvegarde le presse-papiers, notamment texte Unicode, HTML, RTF et bitmap, puis le restaure uniquement s’il n’a pas été modifié entretemps. Si un format privé ne peut pas être sauvegardé, UI Automation est utilisée pour lire directement la sélection quand c’est possible ; sinon la capture s’arrête sans modifier le presse-papiers.
 
@@ -206,9 +206,9 @@ cargo run --locked -- --smoke-test-correction
 cargo run --locked -- --smoke-test-quick-check
 ```
 
-Les tests HTTP utilisent un vrai serveur simulé sur localhost ; aucune clé ni API externe n’est nécessaire. Le smoke test ouvre les paramètres, un aperçu avec texte fictif et le tray pendant trois secondes. Il vérifie que la réponse d’un provider simulé sur localhost est visible, puis quitte, sans enregistrer de paramètres ni contacter un provider externe. L’aperçu de diagnostic n’a aucune destination de remplacement.
+Les tests HTTP utilisent un vrai serveur simulé sur localhost ; aucune clé ni API externe n’est nécessaire. Les smoke tests ouvrent les paramètres, un aperçu avec texte fictif et le tray pendant trois secondes, ou sept secondes pour les parcours rapides afin de vérifier la fermeture automatique de la fenêtre d’erreur. Ils vérifient que la réponse d’un provider simulé sur localhost est visible, puis quittent, sans enregistrer de paramètres ni contacter un provider externe. L’aperçu de diagnostic n’a aucune destination de remplacement.
 
-Les quatre smoke tests vérifient aussi que la fenêtre d’état est visible, conserve le focus de la fenêtre d’origine et refuse l’activation à la souris. Les tests de correction vérifient l’aperçu avec une réponse fictive dans la langue source. Les parcours rapides vérifient la fenêtre d’erreur et l’aperçu de récupération : la destination fictive refuse le collage et le résultat obtenu reste visible sans second appel au provider.
+Les quatre smoke tests vérifient aussi que la fenêtre d’état est visible, conserve le focus de la fenêtre d’origine et refuse l’activation à la souris. Les tests de correction vérifient l’aperçu avec une réponse fictive dans la langue source. Les parcours rapides vérifient le retour à la ligne, la hauteur compacte, les boutons visibles et la fermeture automatique de la fenêtre d’erreur, ainsi que l’aperçu de récupération : la destination fictive refuse le collage et le résultat obtenu reste visible sans second appel au provider.
 
 Les smoke tests mesurent également le layout réel des aperçus : la ligne des sélecteurs doit rester compacte et l’éditeur doit récupérer l’espace vertical disponible.
 

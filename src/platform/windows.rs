@@ -45,12 +45,13 @@ use windows::{
             Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
             WindowsAndMessaging::{
                 CreateWindowExW, DestroyWindow, DispatchMessageW, GUITHREADINFO, GWL_EXSTYLE,
-                GetCursorPos, GetForegroundWindow, GetGUIThreadInfo, GetMessageW,
+                GWL_STYLE, GetCursorPos, GetForegroundWindow, GetGUIThreadInfo, GetMessageW,
                 GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId, HWND_MESSAGE,
                 HWND_TOPMOST, IsWindow, MA_NOACTIVATE, MSG, SW_SHOWNOACTIVATE, SWP_FRAMECHANGED,
                 SWP_NOACTIVATE, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow,
                 TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_MOUSEACTIVATE, WM_NCDESTROY,
-                WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+                WS_BORDER, WS_CAPTION, WS_DLGFRAME, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
+                WS_THICKFRAME,
             },
         },
     },
@@ -239,6 +240,13 @@ pub fn show_status_without_activation(window: isize, placement: Placement) -> Re
             GWL_EXSTYLE,
             style | (WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW).0 as isize,
         );
+        let style = GetWindowLongPtrW(handle, GWL_STYLE);
+        SetWindowLongPtrW(
+            handle,
+            GWL_STYLE,
+            (style | WS_POPUP.0 as isize)
+                & !((WS_CAPTION | WS_THICKFRAME | WS_BORDER | WS_DLGFRAME).0 as isize),
+        );
         SetWindowPos(
             handle,
             HWND_TOPMOST,
@@ -393,7 +401,7 @@ fn replace_inner(selection: &Selection, text: &str, quick: bool) -> Result<()> {
         selection.process,
         accessible.as_ref().map(|a| a.text.as_str()),
     )?;
-    if current != selection.text {
+    if !selection_text_matches(&current, &selection.text) {
         bail!("La sélection a changé. Aucun remplacement effectué ; utilise Copier.");
     }
     check_destination(selection)?;
@@ -439,11 +447,28 @@ fn check_destination(selection: &Selection) -> Result<()> {
     if let Some(identity) = &selection.accessibility {
         let current =
             accessible_selection().context("La sélection accessible a disparu ; utilise Copier")?;
-        if &current.identity != identity || current.text != selection.text {
-            bail!("La position ou le contenu de la sélection a changé. Utilise Copier.");
-        }
+        validate_accessible_selection(identity, &selection.text, &current)?;
     }
     check_foreground(selection.window, selection.process)
+}
+
+fn validate_accessible_selection(
+    identity: &AccessibilityIdentity,
+    text: &str,
+    current: &AccessibleSelection,
+) -> Result<()> {
+    if &current.identity != identity || !selection_text_matches(&current.text, text) {
+        bail!("La position ou le contenu de la sélection a changé. Utilise Copier.");
+    }
+    Ok(())
+}
+
+fn selection_text_matches(left: &str, right: &str) -> bool {
+    // Word (including Outlook Classic's editor) exposes paragraph breaks as CR
+    // through UI Automation, while CF_UNICODETEXT uses CRLF. Compare only their
+    // representations; spaces, paragraph count and all other content stay exact.
+    let normalize = |text: &str| text.replace("\r\n", "\n").replace('\r', "\n");
+    left == right || normalize(left) == normalize(right)
 }
 
 fn wait_for_modifiers() -> Result<()> {
@@ -1004,6 +1029,31 @@ pub fn set_dark_titlebar(hwnd: isize, dark: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn word_paragraph_endings_match_clipboard_without_ignoring_selection_changes() {
+        let identity = AccessibilityIdentity {
+            runtime_id: vec![42, 1],
+            prefix_units: Some(12),
+        };
+        let mut current = AccessibleSelection {
+            text: "Bonjour,\rVoici les documents.\rMerci.".into(),
+            rect: None,
+            identity: identity.clone(),
+        };
+        let clipboard = "Bonjour,\r\nVoici les documents.\r\nMerci.";
+        assert!(validate_accessible_selection(&identity, clipboard, &current).is_ok());
+        current.text = "Bonjour,\nVoici les documents.\nMerci.".into();
+        assert!(validate_accessible_selection(&identity, clipboard, &current).is_ok());
+        current.identity.prefix_units = Some(90);
+        assert!(validate_accessible_selection(&identity, clipboard, &current).is_err());
+        current.identity = identity.clone();
+        current.text = "Bonjour,\rVoici d’autres documents.\rMerci.".into();
+        assert!(validate_accessible_selection(&identity, clipboard, &current).is_err());
+        current.text = "Bonjour,\rVoici les documents.\rMerci. ".into();
+        assert!(validate_accessible_selection(&identity, clipboard, &current).is_err());
+    }
+
     #[test]
     fn popup_stays_in_work_area_including_negative_monitor_coordinates() {
         let area = Rect {

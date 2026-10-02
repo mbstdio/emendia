@@ -4,33 +4,39 @@ pub mod status;
 pub mod theme;
 
 use gpui_kit::{
-    component::{IndexPath, input::InputState, select::SelectState},
+    component::{
+        IndexPath, Selectable, Sizable,
+        button::{Button, ButtonGroup},
+        input::InputState,
+        select::SelectState,
+    },
     *,
 };
 
 pub type LanguageSelect = Entity<SelectState<Vec<String>>>;
 
-pub fn style_select(
-    value: crate::settings::CorrectionStyle,
-    window: &mut Window,
-    cx: &mut App,
-) -> LanguageSelect {
-    let styles = crate::settings::CorrectionStyle::ALL;
-    let index = styles
-        .iter()
-        .position(|style| *style == value)
-        .map(IndexPath::new);
-    cx.new(|cx| {
-        SelectState::new(
-            styles
-                .into_iter()
-                .map(|s| s.label().to_owned())
-                .collect::<Vec<_>>(),
-            index,
-            window,
-            cx,
-        )
-    })
+pub fn style_buttons(id: &'static str, value: crate::settings::CorrectionStyle) -> ButtonGroup {
+    ButtonGroup::new(id).small().compact().children(
+        crate::settings::CorrectionStyle::ALL
+            .into_iter()
+            .enumerate()
+            .map(|(index, style)| {
+                Button::new((id, index))
+                    .child(div().text_xs().child(match style {
+                        crate::settings::CorrectionStyle::Faithful => "Fidèle",
+                        crate::settings::CorrectionStyle::Fluent => "Fluide",
+                        crate::settings::CorrectionStyle::Professional => "Pro",
+                        crate::settings::CorrectionStyle::Casual => "Décontracté",
+                        crate::settings::CorrectionStyle::Concise => "Concis",
+                    }))
+                    .accessibility_label(style.label())
+                    .h(px(28.))
+                    .px_2p5()
+                    .py_1()
+                    .tooltip(style.label())
+                    .selected(style == value)
+            }),
+    )
 }
 
 pub fn language_select(

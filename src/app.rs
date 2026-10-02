@@ -47,30 +47,53 @@ impl Controller {
             foreground,
             "La fenêtre d’état ne doit pas prendre le focus"
         );
-        let (window, _) = self.status_window.as_ref().unwrap();
-        assert!(
-            window.update(cx, |_, window, _| StatusView::smoke_nonactivating(
-                window, placement
-            ))?
-        );
-        if quick {
-            let mut settings = self.settings.clone();
-            settings.correction_style = settings.quick_correction_style;
-            self.quick_translate_with_key(selection, settings, String::new(), operation, cx);
-            assert!(self.session_active);
-            for mode in [
-                TranslationMode::Quick,
-                TranslationMode::Preview,
-                TranslationMode::CorrectionQuick,
-                TranslationMode::CorrectionPreview,
-            ] {
-                self.capture(mode, cx);
-            }
-            assert!(self.session_active);
-        } else {
-            self.close_status(cx);
-            self.open_preview_result(selection, self.settings.clone(), operation, None, cx);
-        }
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(100))
+                .await;
+            this.update(cx, |this, cx| {
+                assert_eq!(
+                    windows::foreground_window(),
+                    foreground,
+                    "L’affichage différé doit conserver le focus"
+                );
+                let (window, view) = this.status_window.as_ref().unwrap();
+                let placement = view.upgrade().unwrap().read(cx).smoke_placement();
+                assert!(
+                    window
+                        .update(cx, |_, window, _| StatusView::smoke_nonactivating(
+                            window, placement
+                        ))
+                        .unwrap()
+                );
+                if quick {
+                    let mut settings = this.settings.clone();
+                    settings.correction_style = settings.quick_correction_style;
+                    this.quick_translate_with_key(
+                        selection,
+                        settings,
+                        String::new(),
+                        operation,
+                        cx,
+                    );
+                    assert!(this.session_active);
+                    for mode in [
+                        TranslationMode::Quick,
+                        TranslationMode::Preview,
+                        TranslationMode::CorrectionQuick,
+                        TranslationMode::CorrectionPreview,
+                    ] {
+                        this.capture(mode, cx);
+                    }
+                    assert!(this.session_active);
+                } else {
+                    this.close_status(cx);
+                    this.open_preview_result(selection, this.settings.clone(), operation, None, cx);
+                }
+            })
+            .expect("Contrôleur de diagnostic");
+        })
+        .detach();
         Ok(())
     }
 
@@ -89,6 +112,7 @@ impl Controller {
                 .and_then(|(_, view)| view.upgrade())
                 .is_some_and(|view| {
                     let view = view.read(cx);
+                    view.smoke_layout();
                     view.terminal
                         && view.error
                         && view.message.starts_with("Remplacement impossible")
@@ -98,6 +122,12 @@ impl Controller {
                 .as_ref()
                 .and_then(|(_, view)| view.upgrade())
                 .is_some_and(|view| view.read(cx).smoke_recovery_result(cx))
+    }
+
+    pub fn smoke_status_closed(&self) -> bool {
+        self.status_window
+            .as_ref()
+            .is_none_or(|(_, view)| view.upgrade().is_none())
     }
 
     pub fn new(
@@ -313,7 +343,7 @@ impl Controller {
         let controller = cx.entity().downgrade();
         match gpui_kit::open_window(options, cx, |window, cx| {
             crate::ui::theme::configure_window(window, cx);
-            let view = cx.new(|_| StatusView::new(operation, controller));
+            let view = cx.new(|_| StatusView::new(operation, controller, placement));
             let weak = view.downgrade();
             window.on_window_should_close(cx, move |_, cx| {
                 weak.upgrade().is_none_or(|view| view.read(cx).terminal)
@@ -321,7 +351,7 @@ impl Controller {
             view
         }) {
             Ok((window, view)) => {
-                match window.update(cx, |_, window, _| StatusView::show(window, placement)) {
+                match window.update(cx, |_, window, cx| view.read(cx).show(window, cx)) {
                     Ok(Ok(())) => {
                         self.status_window = Some((window, view.downgrade()));
                         Ok(())
@@ -346,10 +376,12 @@ impl Controller {
             view.error = error;
             cx.notify();
         });
-        if terminal && !error {
+        if terminal {
             let window = *window;
             cx.spawn(async move |_, cx| {
-                cx.background_executor().timer(Duration::from_secs(2)).await;
+                cx.background_executor()
+                    .timer(Duration::from_secs(if error { 5 } else { 2 }))
+                    .await;
                 let _ = window.update(cx, |_, window, _| window.remove_window());
             })
             .detach();

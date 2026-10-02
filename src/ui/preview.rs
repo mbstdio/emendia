@@ -3,7 +3,7 @@ use crate::{
     platform::windows::{self, Selection},
     settings::{self, CorrectionStyle, Operation, Settings},
     translation::Translator,
-    ui::{LanguageSelect, language_select, style_select},
+    ui::{LanguageSelect, language_select, style_buttons},
 };
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
@@ -26,7 +26,6 @@ pub struct Preview {
     controller: WeakEntity<Controller>,
     source: LanguageSelect,
     target: LanguageSelect,
-    style: LanguageSelect,
     operation: Operation,
     translation: Entity<TextareaState>,
     status: String,
@@ -104,7 +103,6 @@ impl Preview {
         let (settings, operation) = configuration;
         let source = language_select(&settings.source_language, true, window, cx);
         let target = language_select(&settings.target_language, false, window, cx);
-        let style = style_select(settings.correction_style, window, cx);
         let translation =
             cx.new(|cx| TextareaState::new(window, cx).placeholder(operation.pending()));
         let focus = cx.focus_handle();
@@ -120,18 +118,6 @@ impl Preview {
                 |this, _, event: &SelectEvent<Vec<String>>, window, cx| {
                     if let SelectEvent::Confirm(Some(language)) = event {
                         this.settings.source_language = language.clone();
-                        this.translate(false, window, cx);
-                    }
-                },
-            ),
-            cx.subscribe_in(
-                &style,
-                window,
-                |this, _, event: &SelectEvent<Vec<String>>, window, cx| {
-                    if let SelectEvent::Confirm(Some(label)) = event
-                        && let Some(style) = CorrectionStyle::from_label(label)
-                    {
-                        this.settings.correction_style = style;
                         this.translate(false, window, cx);
                     }
                 },
@@ -155,7 +141,6 @@ impl Preview {
             controller,
             source,
             target,
-            style,
             operation,
             translation,
             status: operation.pending().into(),
@@ -333,13 +318,20 @@ impl Render for Preview {
             }))
             .when(self.operation == Operation::Correction, |view| {
                 view.child(
-                    // Select's outer element uses size_full: constrain its row so it
-                    // cannot consume the editor's vertical space in this column.
                     h_flex().h_8().flex_shrink_0().child(
-                        Select::new(&self.style)
-                            .title_prefix("Mode : ")
+                        style_buttons("correction-modes", self.settings.correction_style)
                             .disabled(self.replacing || self.copying)
-                            .w_full(),
+                            .on_click(cx.listener(|this, indices: &Vec<usize>, window, cx| {
+                                if let Some(style) = indices
+                                    .first()
+                                    .and_then(|index| CorrectionStyle::ALL.get(*index))
+                                    .copied()
+                                    && style != this.settings.correction_style
+                                {
+                                    this.settings.correction_style = style;
+                                    this.translate(false, window, cx);
+                                }
+                            })),
                     ),
                 )
             })

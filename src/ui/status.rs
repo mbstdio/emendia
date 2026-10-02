@@ -10,6 +10,10 @@ use gpui_kit::{
     *,
 };
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 pub struct StatusView {
     pub message: String,
@@ -17,26 +21,58 @@ pub struct StatusView {
     pub error: bool,
     operation: Operation,
     controller: WeakEntity<Controller>,
+    layout: Rc<RefCell<Vec<Bounds<Pixels>>>>,
+    viewport: Rc<Cell<gpui_kit::Size<Pixels>>>,
+    placement: windows::Placement,
+    height: Rc<Cell<f32>>,
+    requested_placement: Rc<Cell<windows::Placement>>,
 }
 
 impl StatusView {
-    pub fn new(operation: Operation, controller: WeakEntity<Controller>) -> Self {
+    pub fn new(
+        operation: Operation,
+        controller: WeakEntity<Controller>,
+        placement: windows::Placement,
+    ) -> Self {
         Self {
             message: "Capture du texte… Relâche les touches du raccourci.".into(),
             terminal: false,
             error: false,
             operation,
             controller,
+            layout: Rc::default(),
+            viewport: Rc::default(),
+            placement,
+            height: Rc::new(Cell::new(placement.height)),
+            requested_placement: Rc::new(Cell::new(placement)),
         }
     }
 
-    pub fn show(window: &Window, placement: windows::Placement) -> Result<()> {
+    pub fn show(&self, window: &Window, cx: &App) -> Result<()> {
+        Self::schedule_placement(window, self.requested_placement.clone(), cx)
+    }
+
+    fn schedule_placement(
+        window: &Window,
+        placement: Rc<Cell<windows::Placement>>,
+        cx: &App,
+    ) -> Result<()> {
         let handle = HasWindowHandle::window_handle(window)
             .map_err(|error| anyhow::anyhow!("Fenêtre d’état inaccessible : {error}"))?;
         let RawWindowHandle::Win32(handle) = handle.as_raw() else {
             bail!("Fenêtre Windows attendue")
         };
-        windows::show_status_without_activation(handle.hwnd.get(), placement)
+        let hwnd = handle.hwnd.get();
+        // Native resizing emits synchronous WM_SIZE callbacks into GPUI. Execute
+        // outside a Window/App update so GPUI can update its viewport and renderer.
+        cx.foreground_executor()
+            .spawn(async move {
+                if let Err(error) = windows::show_status_without_activation(hwnd, placement.get()) {
+                    tracing::error!(%error, "Affichage de la fenêtre d’état impossible");
+                }
+            })
+            .detach();
+        Ok(())
     }
 
     pub(crate) fn smoke_nonactivating(window: &Window, placement: windows::Placement) -> bool {
@@ -48,18 +84,80 @@ impl StatusView {
             _ => false,
         })
     }
+
+    pub(crate) fn smoke_layout(&self) {
+        let bounds = self.layout.borrow();
+        let message = bounds.get(1).expect("Le message d’état doit être mesuré");
+        let footer = bounds
+            .get(2)
+            .expect("Les boutons d’erreur doivent être visibles");
+        let size = self.viewport.get();
+        assert!(
+            message.size.width <= size.width - px(24.),
+            "Le message doit rester dans la largeur de la popup : {message:?}, fenêtre : {size:?}"
+        );
+        assert!(
+            message.size.height > px(20.),
+            "L’erreur longue doit revenir à la ligne : {message:?}"
+        );
+        assert!(
+            footer.bottom() <= size.height,
+            "Les boutons doivent rester visibles : {footer:?}, fenêtre : {size:?}"
+        );
+        assert!(
+            size.height < px(160.),
+            "La popup doit s’adapter à son contenu : {size:?}"
+        );
+    }
+
+    pub(crate) fn smoke_placement(&self) -> windows::Placement {
+        windows::Placement {
+            y: self.placement.y + self.placement.height - self.height.get(),
+            height: self.height.get(),
+            ..self.placement
+        }
+    }
 }
 
 impl Render for StatusView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
-            .size_full()
+            .w(px(self.placement.width))
             .p_3()
             .gap_2()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
+            .on_children_prepainted({
+                let layout = self.layout.clone();
+                let viewport = self.viewport.clone();
+                let height = self.height.clone();
+                let placement = self.placement;
+                let requested_placement = self.requested_placement.clone();
+                move |bounds, window, cx| {
+                    let content_height = bounds
+                        .first()
+                        .zip(bounds.last())
+                        .map(|(first, last)| f32::from(last.bottom() - first.origin.y) + 24.)
+                        .unwrap_or(64.)
+                        .ceil()
+                        .clamp(64., placement.height);
+                    *layout.borrow_mut() = bounds;
+                    viewport.set(window.viewport_size());
+                    if (height.get() - content_height).abs() >= 1. {
+                        height.set(content_height);
+                        let resized = windows::Placement {
+                            y: placement.y + placement.height - content_height,
+                            height: content_height,
+                            ..placement
+                        };
+                        requested_placement.set(resized);
+                        let _ = Self::schedule_placement(window, requested_placement.clone(), cx);
+                    }
+                }
+            })
             .child(
                 h_flex()
+                    .flex_shrink_0()
                     .gap_2()
                     .when(!self.terminal, |view| view.child(Spinner::new().small()))
                     .child(
@@ -71,34 +169,41 @@ impl Render for StatusView {
             .child(
                 div()
                     .id("operation-status")
-                    .flex_1()
+                    .w_full()
                     .min_h(px(0.))
+                    .max_h(px(80.))
                     .overflow_y_scroll()
                     .text_sm()
+                    .whitespace_normal()
                     .child(self.message.clone()),
             )
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Button::new("status-settings")
-                            .ghost()
-                            .label("Paramètres")
-                            .disabled(!self.error)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                let _ = this.controller.update(cx, |app, cx| {
-                                    app.open_settings(Some(this.message.clone()), cx)
-                                });
-                            })),
-                    )
-                    .child(div().flex_1())
-                    .child(
-                        Button::new("status-close")
-                            .ghost()
-                            .label("Fermer")
-                            .disabled(!self.terminal)
-                            .on_click(|_, window, _| window.remove_window()),
-                    ),
-            )
+            .when(self.error, |view| {
+                view.child(
+                    h_flex()
+                        .flex_shrink_0()
+                        .gap_2()
+                        .child(
+                            Button::new("status-settings")
+                                .ghost()
+                                .small()
+                                .label("Paramètres")
+                                .disabled(!self.error)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    let _ = this.controller.update(cx, |app, cx| {
+                                        app.open_settings(Some(this.message.clone()), cx)
+                                    });
+                                })),
+                        )
+                        .child(div().flex_1())
+                        .child(
+                            Button::new("status-close")
+                                .ghost()
+                                .small()
+                                .label("Fermer")
+                                .disabled(!self.terminal)
+                                .on_click(|_, window, _| window.remove_window()),
+                        ),
+                )
+            })
     }
 }

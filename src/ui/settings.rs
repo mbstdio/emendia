@@ -2,7 +2,7 @@ use crate::{
     app::Controller,
     platform::hotkey::{self, TranslationMode},
     settings::{self, CorrectionStyle, Settings, ThemePreference},
-    ui::{LanguageSelect, language_select, style_select, text_input},
+    ui::{LanguageSelect, language_select, style_buttons, text_input},
 };
 use anyhow::{Context as _, Result};
 use gpui_kit::{
@@ -81,8 +81,8 @@ pub struct SettingsView {
     quick_hotkey: String,
     correction_hotkey: String,
     quick_correction_hotkey: String,
-    style: LanguageSelect,
-    quick_style: LanguageSelect,
+    style: CorrectionStyle,
+    quick_style: CorrectionStyle,
     launch_at_startup: bool,
     theme: LanguageSelect,
     theme_preference: ThemePreference,
@@ -136,8 +136,8 @@ impl SettingsView {
         });
         let source = language_select(&settings.source_language, true, window, cx);
         let target = language_select(&settings.target_language, false, window, cx);
-        let style = style_select(settings.correction_style, window, cx);
-        let quick_style = style_select(settings.quick_correction_style, window, cx);
+        let style = settings.correction_style;
+        let quick_style = settings.quick_correction_style;
         let theme = cx.new(|cx| {
             SelectState::new(
                 ThemePreference::ALL
@@ -329,18 +329,8 @@ impl SettingsView {
             quick_hotkey: self.quick_hotkey.clone(),
             correction_hotkey: self.correction_hotkey.clone(),
             quick_correction_hotkey: self.quick_correction_hotkey.clone(),
-            correction_style: self
-                .style
-                .read(cx)
-                .selected_value()
-                .and_then(|s| CorrectionStyle::from_label(s))
-                .context("Choisis le mode de correction")?,
-            quick_correction_style: self
-                .quick_style
-                .read(cx)
-                .selected_value()
-                .and_then(|s| CorrectionStyle::from_label(s))
-                .context("Choisis le mode de Quick Check")?,
+            correction_style: self.style,
+            quick_correction_style: self.quick_style,
             launch_at_startup: self.launch_at_startup,
             theme: self.theme_preference,
         };
@@ -559,10 +549,22 @@ impl Render for SettingsView {
                 fields = fields
                     .child(hint("La correction conserve la langue du texte. Le mode fidèle préserve le ton et les formulations ; les autres modes adaptent le style sans changer le sens.", cx))
                     .child(section("Avec aperçu", "Vérifie ou édite la correction avant de remplacer le texte.", cx))
-                    .child(field("Mode par défaut", Select::new(&self.style).w_full()))
+                    .child(field("Mode par défaut", style_buttons("default-correction-modes", self.style)
+                        .on_click(cx.listener(|this, indices: &Vec<usize>, _, cx| {
+                            if let Some(style) = indices.first().and_then(|index| CorrectionStyle::ALL.get(*index)).copied() {
+                                this.style = style;
+                                cx.notify();
+                            }
+                        }))))
                     .child(self.shortcut(TranslationMode::CorrectionPreview, cx))
                     .child(section("Quick Check", "Corrige et remplace directement la sélection en arrière-plan.", cx))
-                    .child(field("Mode par défaut", Select::new(&self.quick_style).w_full()))
+                    .child(field("Mode par défaut", style_buttons("quick-correction-modes", self.quick_style)
+                        .on_click(cx.listener(|this, indices: &Vec<usize>, _, cx| {
+                            if let Some(style) = indices.first().and_then(|index| CorrectionStyle::ALL.get(*index)).copied() {
+                                this.quick_style = style;
+                                cx.notify();
+                            }
+                        }))))
                     .child(self.shortcut(TranslationMode::CorrectionQuick, cx));
             }
             Category::Shortcuts => {

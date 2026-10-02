@@ -86,15 +86,17 @@ impl CorrectionStyle {
                 "Only fix spelling, grammar and punctuation. Preserve the original tone, register and wording as much as possible. Do not rephrase correct passages."
             }
             Self::Fluent => {
-                "Lightly rephrase for natural flow and readability, preserving the original tone."
+                "After correcting errors, rewrite awkward or unnatural phrasing for smoother flow and readability. Preserve the original tone, but do not simply copy sentences that need improvement."
             }
             Self::Professional => {
-                "Use a polished professional tone suitable for workplace communication."
+                "After correcting errors, rewrite the text in a polished professional tone suitable for workplace communication. Replace casual greetings, colloquial expressions and overly familiar wording with professional equivalents. Preserve the meaning, not the original register."
             }
             Self::Casual => {
-                "Use a natural, informal tone without adding slang or familiarity not justified by the text."
+                "After correcting errors, rewrite formal or stiff wording in a natural, relaxed and conversational tone. Use simple everyday expressions without adding slang, invented familiarity or information. Preserve the meaning, not the original register."
             }
-            Self::Concise => "Make the wording concise without losing any essential information.",
+            Self::Concise => {
+                "After correcting errors, shorten verbose wording and remove repetition and filler. Produce a more concise text without losing any essential information."
+            }
         }
     }
 }
