@@ -39,16 +39,36 @@ For the first release, the current package version is `0.1.0`, so use `v0.1.0`. 
 ### What happens automatically
 
 1. Check out the exact tag and full Git history.
-2. Install Rust 1.99.0 on `windows-2022` and restore the Cargo cache.
+2. Install Rust 1.99.0 on the self-hosted Windows x64 runner `mb-nest-1` and reuse its persistent Cargo build directory.
 3. Validate the package version against the tag.
 4. Run formatting checks, Clippy and non-ignored tests.
 5. Compile once with `cargo build --release --locked` and static CRT linkage.
 6. Copy the executable to its portable filename and build the installer with Inno Setup 6.7.3.
-7. Verify the absence of external CRT dependencies, check installation/update/uninstall behavior, generate SHA-256 checksums and save the distributions as Actions artifacts for 14 days.
+7. Verify the absence of external CRT dependencies, generate SHA-256 checksums and save the distributions as Actions artifacts for 14 days.
 8. Generate English release notes with git-cliff 2.14.2 for the checked-out tag.
-9. In a separate publication job, create or resume a draft, upload all three assets, then publish.
+9. Verify installation/update/uninstall on a clean GitHub-hosted `windows-2022` machine using the exact built files and the test script from the built commit.
+10. After both jobs succeed, create or resume a draft in a GitHub-hosted Ubuntu publication job, upload all three assets, then publish.
 
 The publication job uses GitHub's automatic token with `contents: write`. No personal access token or additional secret is needed. GitHub Actions must be enabled and repository or organization policies must allow these actions and release publication.
+
+### Self-hosted runner setup
+
+The build job selects the runner group `MBStudio` with the labels `[self-hosted, windows, x64]`. GitHub routes jobs by groups and labels, not by the runner's display name. The Windows x64 runner `mb-nest-1` in this group is eligible; if the group contains other matching runners, GitHub may select one of them. No custom label is required.
+
+For the organization-level runner in `mbstdio`, open **Organization Settings → Actions → Runner groups → MBStudio** and ensure it allows the `emendia` repository. Then open **Actions → Runners → mb-nest-1** to check its Windows/x64 labels and online status. The group must also permit this repository's visibility and this workflow if workflow restrictions are enabled.
+
+Install these prerequisites on the runner, available to the Windows account running its service:
+
+- A recent GitHub Actions runner compatible with Node 24 actions (runner 2.327.1 or newer).
+- PowerShell 7 (`pwsh`), Git for Windows, and Rustup/Cargo in `PATH`.
+- Visual Studio Build Tools with Desktop development with C++, MSVC x64/x86, a recent Windows SDK, and CMake, as described in the [development guide](development.md#windows-build-environment).
+- Network access to GitHub and the Rust package/toolchain downloads.
+
+Restart the runner service after installing tools or changing its environment so that it receives the updated `PATH`. The workflow installs the pinned Rust toolchain and installs Inno Setup and git-cliff once into the runner's tool cache, reusing them on later runs. Release-note generation uses native PowerShell and the Windows git-cliff binary.
+
+Compiled Cargo files are kept in `${{ runner.tool_cache }}/emendia/mbstdio/emendia/target`, outside the checked-out repository. This directory and the service account's Cargo registry persist between jobs and across release tags on the same runner; checkout can still clean the source tree. The GitHub Cargo-cache action is no longer needed for this persistent runner. The first build is cold, and toolchain/dependency/compiler-option changes can still require recompilation. Removing the directory or replacing the runner loses this local cache.
+
+Installer tests run on a disposable GitHub-hosted Windows profile so that actual installs, shortcuts and startup-registry checks do not affect the self-hosted machine's user profile. Compilation and packaging run on `mb-nest-1`; installer verification and publication use hosted runners.
 
 ### Prereleases
 

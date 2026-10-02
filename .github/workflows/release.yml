@@ -20,7 +20,9 @@ concurrency:
 
 jobs:
   build:
-    runs-on: windows-2022
+    runs-on:
+      group: MBStudio
+      labels: [self-hosted, windows, x64]
     timeout-minutes: 90
     defaults:
       run:
@@ -32,18 +34,24 @@ jobs:
       RUSTFLAGS: '-C target-feature=+crt-static'
     steps:
       - name: Check out the requested version
+        id: source
         uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref || github.ref }}
           fetch-depth: 0
 
+      - name: Configure persistent Cargo build directory
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          # Keep compiled dependencies outside checkout's git clean on this runner.
+          $target = Join-Path $env:RUNNER_TOOL_CACHE "emendia/$env:REPOSITORY/target"
+          "CARGO_TARGET_DIR=$target" >> $env:GITHUB_ENV
+
       - name: Install Rust
         run: |
           rustup toolchain install $env:RUST_TOOLCHAIN --profile minimal --component rustfmt --component clippy
           if ($LASTEXITCODE -ne 0) { throw 'Rust installation failed' }
-
-      - name: Cache Cargo dependencies
-        uses: Swatinem/rust-cache@v2
 
       - name: Validate version and choose filenames
         id: version
@@ -112,7 +120,7 @@ jobs:
           $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           $dumpbin = Get-ChildItem "$vs/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe" | Sort-Object FullName | Select-Object -Last 1
           if (-not $dumpbin) { throw 'MSVC dumpbin was not found' }
-          $dependencies = & $dumpbin.FullName /DEPENDENTS 'target/release/emendia.exe'
+          $dependencies = & $dumpbin.FullName /DEPENDENTS "$env:CARGO_TARGET_DIR/release/emendia.exe"
           if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect executable dependencies' }
           if ($dependencies -match '(?i)(vcruntime|msvcp|ucrtbase|api-ms-win-crt-).*\.dll') {
             throw 'The portable executable must statically link the Visual C++ runtime'
@@ -121,10 +129,13 @@ jobs:
       - name: Install Inno Setup
         run: |
           $installer = Join-Path $env:RUNNER_TEMP 'innosetup-6.7.3.exe'
-          $destination = Join-Path $env:RUNNER_TEMP 'inno-setup'
-          Invoke-WebRequest 'https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe' -OutFile $installer
-          $process = Start-Process $installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER', '/NOICONS', "/DIR=`"$destination`"" -Wait -PassThru
-          if ($process.ExitCode -ne 0) { throw 'Inno Setup installation failed' }
+          $destination = Join-Path $env:RUNNER_TOOL_CACHE 'inno-setup/6.7.3'
+          if (-not (Test-Path "$destination/ISCC.exe")) {
+            New-Item -ItemType Directory -Path (Split-Path $destination) -Force | Out-Null
+            Invoke-WebRequest 'https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe' -OutFile $installer
+            $process = Start-Process $installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER', '/NOICONS', "/DIR=`"$destination`"" -Wait -PassThru
+            if ($process.ExitCode -ne 0) { throw 'Inno Setup installation failed' }
+          }
           $destination >> $env:GITHUB_PATH
 
       - name: Package the portable executable and installer
@@ -132,9 +143,10 @@ jobs:
           APP_VERSION: ${{ steps.version.outputs.version }}
           BUILD_LABEL: ${{ steps.version.outputs.label }}
         run: |
+          if (Test-Path 'target/dist') { Remove-Item 'target/dist' -Recurse -Force }
           New-Item -ItemType Directory -Path 'target/dist' -Force | Out-Null
-          Copy-Item 'target/release/emendia.exe' "target/dist/Emendia-$env:BUILD_LABEL-windows-x64.exe"
-          $source = (Resolve-Path 'target/release/emendia.exe').Path
+          Copy-Item "$env:CARGO_TARGET_DIR/release/emendia.exe" "target/dist/Emendia-$env:BUILD_LABEL-windows-x64.exe"
+          $source = (Resolve-Path "$env:CARGO_TARGET_DIR/release/emendia.exe").Path
           $output = (Resolve-Path 'target/dist').Path
           ISCC "/DAppVersion=$env:APP_VERSION" "/DBuildLabel=$env:BUILD_LABEL" "/DSourceExe=$source" "/DOutputDir=$output" 'packaging/windows/emendia.iss'
           if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed' }
@@ -142,12 +154,6 @@ jobs:
             $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
             "$hash  $($_.Name)"
           } | Set-Content 'target/dist/SHA256SUMS.txt' -Encoding utf8NoBOM
-
-      - name: Verify installation, update and uninstall
-        env:
-          BUILD_LABEL: ${{ steps.version.outputs.label }}
-        run: |
-          ./packaging/windows/test-installer.ps1 -Installer "target/dist/Emendia-$env:BUILD_LABEL-windows-x64-setup.exe" -PortableExe "target/dist/Emendia-$env:BUILD_LABEL-windows-x64.exe"
 
       - name: Save downloadable build artifacts
         uses: actions/upload-artifact@v4
@@ -160,10 +166,19 @@ jobs:
 
       - name: Generate release notes
         if: github.event_name == 'push'
-        uses: orhun/git-cliff-action@v4
-        with:
-          version: v2.14.2
-          args: ${{ steps.notes.outputs.range }} --tag ${{ steps.version.outputs.label }} --output target/release-notes.md
+        env:
+          NOTES_RANGE: ${{ steps.notes.outputs.range }}
+          RELEASE_TAG: ${{ steps.version.outputs.label }}
+        run: |
+          $destination = Join-Path $env:RUNNER_TOOL_CACHE 'git-cliff/2.14.2'
+          $cliff = Join-Path $destination 'git-cliff-2.14.2/git-cliff.exe'
+          if (-not (Test-Path $cliff)) {
+            $archive = Join-Path $env:RUNNER_TEMP 'git-cliff-2.14.2.zip'
+            Invoke-WebRequest 'https://github.com/orhun/git-cliff/releases/download/v2.14.2/git-cliff-2.14.2-x86_64-pc-windows-msvc.zip' -OutFile $archive
+            Expand-Archive $archive -DestinationPath $destination -Force
+          }
+          & $cliff --config cliff.toml $env:NOTES_RANGE --tag $env:RELEASE_TAG --output target/release-notes.md
+          if ($LASTEXITCODE -ne 0) { throw 'Release-note generation failed' }
 
       - name: Save release notes for publication
         if: github.event_name == 'push'
@@ -174,12 +189,36 @@ jobs:
           if-no-files-found: error
 
     outputs:
+      commit: ${{ steps.source.outputs.commit }}
       label: ${{ steps.version.outputs.label }}
       prerelease: ${{ steps.version.outputs.prerelease }}
 
+  verify-installer:
+    needs: build
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - name: Check out the installer tests at the built commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.build.outputs.commit }}
+
+      - name: Download distributions
+        uses: actions/download-artifact@v5
+        with:
+          name: Emendia-${{ needs.build.outputs.label }}-windows-x64
+          path: dist
+
+      - name: Verify installation, update and uninstall on a clean profile
+        shell: pwsh
+        env:
+          BUILD_LABEL: ${{ needs.build.outputs.label }}
+        run: |
+          ./packaging/windows/test-installer.ps1 -Installer "dist/Emendia-$env:BUILD_LABEL-windows-x64-setup.exe" -PortableExe "dist/Emendia-$env:BUILD_LABEL-windows-x64.exe"
+
   publish:
     if: github.event_name == 'push'
-    needs: build
+    needs: [build, verify-installer]
     runs-on: ubuntu-latest
     permissions:
       contents: write
