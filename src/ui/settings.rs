@@ -8,6 +8,7 @@ use anyhow::{Context as _, Result};
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
+        checkbox::Checkbox,
         input::{Input, InputEvent, InputState},
         select::{Select, SelectEvent, SelectState},
         *,
@@ -28,6 +29,7 @@ pub struct SettingsView {
     target: LanguageSelect,
     hotkey: String,
     quick_hotkey: String,
+    launch_at_startup: bool,
     recording: Option<TranslationMode>,
     focus: FocusHandle,
     pub status: String,
@@ -148,6 +150,7 @@ impl SettingsView {
             target,
             hotkey: settings.hotkey,
             quick_hotkey: settings.quick_hotkey,
+            launch_at_startup: settings.launch_at_startup,
             recording: None,
             focus: cx.focus_handle(),
             status: error.or(key_error).unwrap_or_else(|| {
@@ -209,6 +212,7 @@ impl SettingsView {
                 .clone(),
             hotkey: self.hotkey.clone(),
             quick_hotkey: self.quick_hotkey.clone(),
+            launch_at_startup: self.launch_at_startup,
         };
         settings.validate()?;
         settings.validate_hotkeys()?;
@@ -380,6 +384,9 @@ impl Render for SettingsView {
                     .child(Button::new("record-quick").label(if self.recording == Some(TranslationMode::Quick) { "Appuie sur le raccourci…" } else { "Changer le raccourci" })
                         .on_click(cx.listener(|this, _, window, cx| { this.recording = Some(TranslationMode::Quick); this.focus.focus(window, cx); this.status = "Appuie sur la combinaison souhaitée (Échap pour annuler).".into(); cx.notify(); }))))
                 .child(div().text_sm().text_color(cx.theme().muted_foreground).child("Quick Translate remplace directement la sélection en arrière-plan, avec les langues et le provider enregistrés ci-dessus."))
+                .child(Checkbox::new("launch-at-startup").label("Lancer au démarrage de Windows").checked(self.launch_at_startup)
+                    .on_click(cx.listener(|this, checked, _, cx| { this.launch_at_startup = *checked; cx.notify(); })))
+                .child(div().text_sm().text_color(cx.theme().muted_foreground).child("Ouvre l’application dans le tray à l’ouverture de ta session. Enregistre pour appliquer cette option."))
                 .child(div().text_sm().text_color(cx.theme().muted_foreground).child("Fermer les fenêtres laisse l’application dans le tray. Pour arrêter : tray → Quitter.")))
             .child(div().text_sm().max_h(px(100.)).id("settings-status").overflow_y_scroll().child(self.status.clone()))
             .child(h_flex().gap_2()

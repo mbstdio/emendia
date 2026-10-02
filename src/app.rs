@@ -1,6 +1,7 @@
 use crate::{
     platform::{
         hotkey::{HotkeyRegistration, TranslationMode},
+        startup,
         tray::Tray,
         windows::{self, Selection},
     },
@@ -369,13 +370,15 @@ impl Controller {
         next.validate_hotkeys()?;
         self.hotkey
             .change_with(&next.hotkey, &next.quick_hotkey, || {
-                let old_key = settings::load_api_key(&next.base_url)?;
-                settings::save_api_key(&next.base_url, key)?;
-                if let Err(error) = self.store.save(&next) {
-                    let _ = settings::save_api_key(&next.base_url, &old_key);
-                    return Err(error);
-                }
-                Ok(())
+                startup::configure(next.launch_at_startup, || {
+                    let old_key = settings::load_api_key(&next.base_url)?;
+                    settings::save_api_key(&next.base_url, key)?;
+                    if let Err(error) = self.store.save(&next) {
+                        let _ = settings::save_api_key(&next.base_url, &old_key);
+                        return Err(error);
+                    }
+                    Ok(())
+                })
             })?;
         self.settings = next;
         self.tray.enabled.set_checked(true);

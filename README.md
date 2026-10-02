@@ -16,6 +16,7 @@ Sélectionner un texte → **Ctrl+Alt+T** → aperçu près de la sélection →
 - Providers OpenAI, LM Studio, Ollama ou serveur personnalisé compatible `POST /chat/completions`.
 - Configuration JSON locale et clés API séparées par endpoint dans le gestionnaire d’identifiants Windows.
 - Icône tray : paramètres, activation/désactivation de la hotkey, quitter. Fermer toutes les fenêtres n’arrête pas le processus.
+- Option pour lancer l’application dans le tray à l’ouverture de session Windows, désactivée par défaut.
 
 ## Prérequis Windows
 
@@ -70,7 +71,9 @@ Pour une build optimisée, sans console :
 cargo build --release --locked
 ```
 
-Exécutable : **`target/release/translation-tool.exe`**. Cette première version fournit un exécutable, pas encore un installateur ni un lancement automatique à l’ouverture de session.
+Exécutable : **`target/release/translation-tool.exe`**. Cette première version fournit un exécutable, pas encore un installateur.
+
+Pour le lancement automatique, cocher **Lancer au démarrage de Windows** dans les paramètres puis **Enregistrer**. L’application démarre dans le tray à l’ouverture de la session de l’utilisateur courant, sans droits administrateur. Décocher puis enregistrer retire le lancement automatique. L’option utilise l’entrée `TranslationTool` dans `HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run`, avec le chemin de l’exécutable courant. Après déplacement de l’exécutable, enregistrer à nouveau depuis son nouvel emplacement. Pour éviter une console au démarrage, activer l’option depuis la build release.
 
 ## Configurer le provider
 
@@ -149,6 +152,7 @@ src/
   platform/
     windows.rs             Capture, identité, placement et remplacement
     hotkey.rs              Réservation transactionnelle de la hotkey
+    startup.rs             Lancement à l’ouverture de session Windows
     tray.rs                Icône et menu
 ```
 
@@ -177,6 +181,7 @@ Tests manuels de bout en bout recommandés :
 - Bloc-notes : capturer une sélection, éditer la traduction et remplacer ; annuler sans changement.
 - Quick Translate : vérifier le remplacement direct avec les langues enregistrées ; changer la sélection ou la fenêtre pendant la requête et vérifier l’aperçu de récupération ; déclencher plusieurs fois pour vérifier qu’une seule traduction est effectuée.
 - Raccourcis : configurer deux combinaisons distinctes, les échanger, tester un conflit et activer/désactiver les deux depuis le tray.
+- Démarrage Windows : cocher l’option et enregistrer, rouvrir les paramètres puis vérifier le lancement dans le tray après une nouvelle ouverture de session ; décocher et enregistrer pour vérifier sa suppression.
 - Champ éditable du navigateur et éditeur de code : vérifier le retour de focus.
 - Changer la sélection ou le document pendant l’aperçu : le remplacement doit être refusé si le changement est détecté.
 - Changer rapidement de langue puis fermer l’aperçu : aucune ancienne réponse ne doit rouvrir la fenêtre.

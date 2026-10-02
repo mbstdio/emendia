@@ -31,6 +31,7 @@ pub struct Settings {
     pub target_language: String,
     pub hotkey: String,
     pub quick_hotkey: String,
+    pub launch_at_startup: bool,
 }
 
 impl Default for Settings {
@@ -42,6 +43,7 @@ impl Default for Settings {
             target_language: "Anglais".into(),
             hotkey: "Ctrl+Alt+KeyT".into(),
             quick_hotkey: "Ctrl+Alt+KeyQ".into(),
+            launch_at_startup: false,
         }
     }
 }
@@ -173,6 +175,7 @@ mod tests {
         let mut settings = Settings::default();
         store.save(&settings).unwrap();
         settings.source_language = "Français".into();
+        settings.launch_at_startup = true;
         store.save(&settings).unwrap();
         assert_eq!(store.load().unwrap().unwrap(), settings);
         assert!(
@@ -216,6 +219,7 @@ mod tests {
             r#"{"hotkey":"Ctrl+Alt+KeyY","source_language":"Allemand","target_language":"Français"}"#,
         ).unwrap();
         assert_eq!(settings.quick_hotkey, "Ctrl+Alt+KeyQ");
+        assert!(!settings.launch_at_startup);
         assert_eq!(settings.hotkey, "Ctrl+Alt+KeyY");
         assert_eq!(settings.source_language, "Allemand");
         assert_eq!(settings.target_language, "Français");
