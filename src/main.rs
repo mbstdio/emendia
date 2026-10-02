@@ -122,8 +122,11 @@ fn run() -> Result<()> {
                             cx.background_executor().timer(std::time::Duration::from_millis(500)).await;
                             cx.update(|cx| {
                                 tracing::info!("GPUI onboarding smoke test: sole setup window, all five steps and backward navigation verified without saving");
-                                cx.quit();
+                                let controller = cx.global::<AppController>()._controller.clone();
+                                controller.update(cx, |controller, cx| controller.smoke_close_onboarding(cx));
                             });
+                            cx.background_executor().timer(std::time::Duration::from_secs(1)).await;
+                            panic!("Closing incomplete onboarding must quit Emendia completely");
                         }).detach();
                     } else if smoke_test {
                         cx.spawn(async move |cx| {

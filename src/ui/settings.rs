@@ -113,6 +113,18 @@ impl SettingsView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        cx.on_release(|this, cx| {
+            let controller = this.controller.clone();
+            cx.defer(move |cx| {
+                if controller
+                    .upgrade()
+                    .is_some_and(|app| !app.read(cx).settings.onboarding_completed)
+                {
+                    cx.quit();
+                }
+            });
+        })
+        .detach();
         let preset = match settings.base_url.trim_end_matches('/') {
             "https://api.openai.com/v1" => 0,
             "http://localhost:1234/v1" => 1,

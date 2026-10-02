@@ -647,6 +647,16 @@ impl Controller {
         assert_eq!(cx.windows().len(), 1, "Only onboarding must be open");
     }
 
+    pub fn smoke_close_onboarding(&mut self, cx: &mut Context<Self>) {
+        assert!(!self.settings.onboarding_completed);
+        self.settings_window
+            .as_ref()
+            .expect("Setup window must exist")
+            .0
+            .update(cx, |_, window, _| window.remove_window())
+            .expect("Setup window must close");
+    }
+
     pub fn save_settings(&mut self, next: Settings, key: &str) -> Result<()> {
         next.validate()?;
         next.validate_hotkeys()?;

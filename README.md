@@ -33,7 +33,7 @@ Build Emendia using the [Windows build instructions](#building-on-windows), then
 
 ### Default shortcuts
 
-Closing the assistant before finishing leaves setup incomplete; it opens again on the next launch. Changing appearance or interface language does not complete setup. Existing configurations (including imported legacy settings) keep their usual startup behavior. Setup images are embedded in the executable.
+Closing the assistant before finishing quits Emendia completely and leaves setup incomplete; the assistant opens again on the next launch. After setup has been saved, closing its confirmation screen leaves Emendia running in the tray. Changing appearance or interface language does not complete setup. Existing configurations (including imported legacy settings) keep their usual startup behavior. Setup images are embedded in the executable.
 
 New setup and Settings windows open on the monitor containing the cursor, centered in its usable area and using its DPI scaling. The setup window is non-resizable; Settings remains resizable.
 
@@ -193,7 +193,7 @@ foreach ($language in 'en', 'fr') {
 }
 ```
 
-HTTP tests use a real mock server on localhost and require no API key or external provider. Onboarding smoke diagnostics verify that only the setup assistant opens, walk through all five steps, then return to welcome without saving configuration. Other smoke tests open settings, a preview with sample text and the tray, then quit after three seconds, or seven seconds for quick flows. They verify provider results, compact preview layout, non-activating status behavior, wrapping and automatic error-popup closure. Quick flows also verify recovery after a simulated paste failure without making another request. These diagnostics do not have a real replacement destination or save form settings.
+HTTP tests use a real mock server on localhost and require no API key or external provider. Onboarding smoke diagnostics verify that only the setup assistant opens, walk through all five steps, then return to welcome without saving configuration. They also verify that closing incomplete setup terminates the application. Other smoke tests open settings, a preview with sample text and the tray, then quit after three seconds, or seven seconds for quick flows. They verify provider results, compact preview layout, non-activating status behavior, wrapping and automatic error-popup closure. Quick flows also verify recovery after a simulated paste failure without making another request. These diagnostics do not have a real replacement destination or save form settings.
 
 An additional Windows test launches an isolated native editor and checks capture, paste, focus preservation and clipboard restoration for text and bitmap. It requires an interactive desktop and temporarily uses focus and the clipboard; do not interact with another application during the test:
 
