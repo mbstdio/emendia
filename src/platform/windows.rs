@@ -9,10 +9,11 @@ use std::{
 };
 use windows::{
     Win32::{
-        Foundation::{HANDLE, HGLOBAL, HWND, POINT},
+        Foundation::{HANDLE, HGLOBAL, HWND, LPARAM, LRESULT, POINT, WPARAM},
         Graphics::Gdi::{
             DeleteEnhMetaFile, DeleteMetaFile, DeleteObject, GetMonitorInfoW, HENHMETAFILE,
-            HGDIOBJ, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint,
+            HGDIOBJ, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint,
+            MonitorFromWindow,
         },
         System::{
             Com::{
@@ -41,11 +42,15 @@ use windows::{
                 GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
                 SendInput, VIRTUAL_KEY, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
             },
+            Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
             WindowsAndMessaging::{
-                CreateWindowExW, DestroyWindow, DispatchMessageW, GUITHREADINFO, GetCursorPos,
-                GetForegroundWindow, GetGUIThreadInfo, GetMessageW, GetWindowTextW,
-                GetWindowThreadProcessId, HWND_MESSAGE, IsWindow, MSG, SetForegroundWindow,
-                TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE,
+                CreateWindowExW, DestroyWindow, DispatchMessageW, GUITHREADINFO, GWL_EXSTYLE,
+                GetCursorPos, GetForegroundWindow, GetGUIThreadInfo, GetMessageW,
+                GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId, HWND_MESSAGE,
+                HWND_TOPMOST, IsWindow, MA_NOACTIVATE, MSG, SW_SHOWNOACTIVATE, SWP_FRAMECHANGED,
+                SWP_NOACTIVATE, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+                TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_MOUSEACTIVATE, WM_NCDESTROY,
+                WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
             },
         },
     },
@@ -54,6 +59,23 @@ use windows::{
 
 const UNICODE_TEXT: u32 = 13;
 const MAX_TEXT_UNITS: usize = 100_000;
+
+pub(crate) fn foreground_window() -> isize {
+    unsafe { GetForegroundWindow().0 as isize }
+}
+
+pub(crate) fn status_is_nonactivating(window: isize) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{IsWindowVisible, SendMessageW};
+    unsafe {
+        let handle = hwnd(window);
+        let style = GetWindowLongPtrW(handle, GWL_EXSTYLE);
+        let expected = (WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW).0 as isize;
+        style & expected == expected
+            && IsWindowVisible(handle).as_bool()
+            && SendMessageW(handle, WM_MOUSEACTIVATE, WPARAM(0), LPARAM(0)).0
+                == MA_NOACTIVATE as isize
+    }
+}
 
 #[cfg(test)]
 mod desktop_tests;
@@ -164,6 +186,124 @@ pub fn capture_target() -> Result<CaptureTarget> {
     }
 }
 
+pub fn status_placement(target: &CaptureTarget) -> Result<Placement> {
+    status_placement_for_window(target.window)
+}
+
+pub(crate) fn status_placement_for_window(window: isize) -> Result<Placement> {
+    unsafe {
+        let monitor = if window != 0 {
+            MonitorFromWindow(hwnd(window), MONITOR_DEFAULTTONEAREST)
+        } else {
+            let mut cursor = POINT::default();
+            GetCursorPos(&mut cursor)?;
+            MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST)
+        };
+        let mut info = MONITORINFO {
+            cbSize: size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        GetMonitorInfoW(monitor, &mut info).ok()?;
+        let (mut dpi_x, mut dpi_y) = (96, 96);
+        GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y)?;
+        let scale = dpi_x as f32 / 96.;
+        let width = 340_f32.min((info.rcWork.right - info.rcWork.left) as f32 / scale);
+        let height = 160_f32.min((info.rcWork.bottom - info.rcWork.top) as f32 / scale);
+        Ok(Placement {
+            monitor: monitor.0 as u64,
+            x: (info.rcWork.right as f32 / scale - width - 16.)
+                .max(info.rcWork.left as f32 / scale),
+            y: (info.rcWork.bottom as f32 / scale - height - 16.)
+                .max(info.rcWork.top as f32 / scale),
+            width,
+            height,
+            used_selection: false,
+        })
+    }
+}
+
+/// Called while the GPUI window is still hidden, on its owning UI thread.
+pub fn show_status_without_activation(window: isize, placement: Placement) -> Result<()> {
+    let (x, y, width, height) = status_physical_bounds(placement)?;
+    unsafe {
+        let handle = hwnd(window);
+        if !IsWindow(handle).as_bool() {
+            bail!("Fenêtre d’état invalide.");
+        }
+        // GPUI handles WM_MOUSEACTIVATE with MA_ACTIVATE even for WS_EX_NOACTIVATE.
+        // Intercept it before GPUI so clicking the status cannot activate the popup.
+        SetWindowSubclass(handle, Some(status_subclass), 1, 0).ok()?;
+        let style = GetWindowLongPtrW(handle, GWL_EXSTYLE);
+        SetWindowLongPtrW(
+            handle,
+            GWL_EXSTYLE,
+            style | (WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW).0 as isize,
+        );
+        SetWindowPos(
+            handle,
+            HWND_TOPMOST,
+            x,
+            y,
+            width,
+            height,
+            SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        )?;
+        let _ = ShowWindow(handle, SW_SHOWNOACTIVATE);
+        Ok(())
+    }
+}
+
+fn status_physical_bounds(placement: Placement) -> Result<(i32, i32, i32, i32)> {
+    let (mut dpi_x, mut dpi_y) = (96, 96);
+    unsafe {
+        GetDpiForMonitor(
+            HMONITOR(placement.monitor as *mut _),
+            MDT_EFFECTIVE_DPI,
+            &mut dpi_x,
+            &mut dpi_y,
+        )?;
+    }
+    let scale = dpi_x as f32 / 96.;
+    Ok((
+        (placement.x * scale).round() as i32,
+        (placement.y * scale).round() as i32,
+        (placement.width * scale).round() as i32,
+        (placement.height * scale).round() as i32,
+    ))
+}
+
+pub(crate) fn status_has_expected_bounds(window: isize, placement: Placement) -> bool {
+    use windows::Win32::{Foundation::RECT, UI::WindowsAndMessaging::GetWindowRect};
+    let Ok((x, y, width, height)) = status_physical_bounds(placement) else {
+        return false;
+    };
+    let mut rect = RECT::default();
+    (unsafe { GetWindowRect(hwnd(window), &mut rect).is_ok() })
+        && (rect.left - x).abs() <= 1
+        && (rect.top - y).abs() <= 1
+        && (rect.right - rect.left - width).abs() <= 1
+        && (rect.bottom - rect.top - height).abs() <= 1
+}
+
+unsafe extern "system" fn status_subclass(
+    window: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    id: usize,
+    _: usize,
+) -> LRESULT {
+    if message == WM_MOUSEACTIVATE {
+        return LRESULT(MA_NOACTIVATE as isize);
+    }
+    unsafe {
+        if message == WM_NCDESTROY {
+            let _ = RemoveWindowSubclass(window, Some(status_subclass), id);
+        }
+        DefSubclassProc(window, message, wparam, lparam)
+    }
+}
+
 pub fn capture(target: CaptureTarget) -> Result<Selection> {
     let _operation = CLIPBOARD_OPERATION
         .lock()
@@ -214,7 +354,7 @@ fn replace_inner(selection: &Selection, text: &str, quick: bool) -> Result<()> {
         .lock()
         .map_err(|_| anyhow::anyhow!("Service presse-papiers interrompu"))?;
     if text.trim().is_empty() {
-        bail!("La traduction est vide.");
+        bail!("Le résultat est vide.");
     }
     let _com = ComApartment::new()?;
     wait_for_modifiers()?;

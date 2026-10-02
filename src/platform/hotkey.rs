@@ -25,10 +25,25 @@ pub fn parse_pair(preview: &str, quick: &str) -> Result<[HotKey; 2]> {
     Ok(keys)
 }
 
+pub fn parse_shortcuts(values: [&str; 4]) -> Result<[HotKey; 4]> {
+    let keys = [
+        parse(values[0])?,
+        parse(values[1])?,
+        parse(values[2])?,
+        parse(values[3])?,
+    ];
+    for (index, key) in keys.iter().enumerate() {
+        if keys[..index].contains(key) {
+            bail!("Les quatre raccourcis doivent être différents.");
+        }
+    }
+    Ok(keys)
+}
+
 // This object lives on GPUI's main thread, which owns the Win32 message loop.
 pub struct HotkeyRegistration {
     manager: GlobalHotKeyManager,
-    hotkeys: Option<[HotKey; 2]>,
+    hotkeys: Option<[HotKey; 4]>,
     registered: Vec<HotKey>,
 }
 
@@ -36,6 +51,23 @@ pub struct HotkeyRegistration {
 pub enum TranslationMode {
     Preview,
     Quick,
+    CorrectionPreview,
+    CorrectionQuick,
+}
+
+impl TranslationMode {
+    pub fn operation(self) -> crate::settings::Operation {
+        match self {
+            Self::Preview | Self::Quick => crate::settings::Operation::Translation,
+            Self::CorrectionPreview | Self::CorrectionQuick => {
+                crate::settings::Operation::Correction
+            }
+        }
+    }
+
+    pub fn quick(self) -> bool {
+        matches!(self, Self::Quick | Self::CorrectionQuick)
+    }
 }
 
 impl HotkeyRegistration {
@@ -47,17 +79,16 @@ impl HotkeyRegistration {
         })
     }
 
-    pub fn change(&mut self, preview: &str, quick: &str) -> Result<()> {
-        self.change_with(preview, quick, || Ok(()))
+    pub fn change(&mut self, values: [&str; 4]) -> Result<()> {
+        self.change_with(values, || Ok(()))
     }
 
     pub fn change_with(
         &mut self,
-        preview: &str,
-        quick: &str,
+        values: [&str; 4],
         persist: impl FnOnce() -> Result<()>,
     ) -> Result<()> {
-        let next = parse_pair(preview, quick)?;
+        let next = parse_shortcuts(values)?;
         update_registration(
             &mut self.registered,
             &next,
@@ -91,6 +122,10 @@ impl HotkeyRegistration {
             Some(TranslationMode::Preview)
         } else if keys[1].id() == id {
             Some(TranslationMode::Quick)
+        } else if keys[2].id() == id {
+            Some(TranslationMode::CorrectionPreview)
+        } else if keys[3].id() == id {
+            Some(TranslationMode::CorrectionQuick)
         } else {
             None
         }
@@ -157,6 +192,45 @@ mod tests {
         assert!(parse("Ctrl+Alt+KeyT").is_ok());
         assert!(parse("Shift+KeyT").is_err());
         assert!(parse("nonsense").is_err());
+    }
+
+    #[test]
+    fn all_four_actions_have_distinct_valid_defaults() {
+        let settings = crate::settings::Settings::default();
+        let keys = parse_shortcuts(settings.shortcuts()).unwrap();
+        for index in 0..4 {
+            let mut values = settings.shortcuts();
+            values[index] = "Alt+Ctrl+KeyT";
+            values[(index + 1) % 4] = "Ctrl+Alt+KeyT";
+            assert!(parse_shortcuts(values).is_err());
+        }
+        assert_eq!(keys[0], parse("Ctrl+F12").unwrap());
+        assert_eq!(keys[3], parse("Ctrl+Shift+F11").unwrap());
+    }
+
+    #[test]
+    fn fourth_shortcut_conflict_rolls_back_all_new_reservations() {
+        let old = parse_shortcuts(crate::settings::Settings::default().shortcuts()).unwrap();
+        let next = parse_shortcuts(["Ctrl+F1", "Ctrl+F2", "Ctrl+F3", "Ctrl+F4"]).unwrap();
+        let mut registered = old.to_vec();
+        let result = update_registration(
+            &mut registered,
+            &next,
+            |key| {
+                if key == next[3] {
+                    bail!("conflict")
+                } else {
+                    Ok(())
+                }
+            },
+            |key| {
+                assert!(!old.contains(&key));
+                Ok(())
+            },
+            || panic!("cannot persist"),
+        );
+        assert!(result.is_err());
+        assert_eq!(registered, old);
     }
 
     #[test]

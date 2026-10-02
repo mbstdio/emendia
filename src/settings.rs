@@ -22,6 +22,88 @@ pub const LANGUAGES: &[&str] = &[
 ];
 pub const AUTO: &str = "Automatique";
 
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum CorrectionStyle {
+    #[default]
+    Faithful,
+    Fluent,
+    Professional,
+    Casual,
+    Concise,
+}
+
+impl CorrectionStyle {
+    pub const ALL: [Self; 5] = [
+        Self::Faithful,
+        Self::Fluent,
+        Self::Professional,
+        Self::Casual,
+        Self::Concise,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Faithful => "Correction fidèle",
+            Self::Fluent => "Plus fluide",
+            Self::Professional => "Professionnel",
+            Self::Casual => "Décontracté",
+            Self::Concise => "Concis",
+        }
+    }
+
+    pub fn from_label(label: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|style| style.label() == label)
+    }
+
+    pub fn instruction(self) -> &'static str {
+        match self {
+            Self::Faithful => {
+                "Only fix spelling, grammar and punctuation. Preserve the original tone, register and wording as much as possible. Do not rephrase correct passages."
+            }
+            Self::Fluent => {
+                "Lightly rephrase for natural flow and readability, preserving the original tone."
+            }
+            Self::Professional => {
+                "Use a polished professional tone suitable for workplace communication."
+            }
+            Self::Casual => {
+                "Use a natural, informal tone without adding slang or familiarity not justified by the text."
+            }
+            Self::Concise => "Make the wording concise without losing any essential information.",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Operation {
+    #[default]
+    Translation,
+    Correction,
+}
+
+impl Operation {
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Translation => "Traduction",
+            Self::Correction => "Correction",
+        }
+    }
+
+    pub fn pending(self) -> &'static str {
+        match self {
+            Self::Translation => "Traduction en cours…",
+            Self::Correction => "Correction en cours…",
+        }
+    }
+
+    pub fn quick_title(self) -> &'static str {
+        match self {
+            Self::Translation => "Quick Translate",
+            Self::Correction => "Quick Check",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Settings {
@@ -31,6 +113,10 @@ pub struct Settings {
     pub target_language: String,
     pub hotkey: String,
     pub quick_hotkey: String,
+    pub correction_hotkey: String,
+    pub quick_correction_hotkey: String,
+    pub correction_style: CorrectionStyle,
+    pub quick_correction_style: CorrectionStyle,
     pub launch_at_startup: bool,
 }
 
@@ -41,8 +127,12 @@ impl Default for Settings {
             model: "gpt-4.1-mini".into(),
             source_language: AUTO.into(),
             target_language: "Anglais".into(),
-            hotkey: "Ctrl+Alt+KeyT".into(),
-            quick_hotkey: "Ctrl+Alt+KeyQ".into(),
+            hotkey: "Ctrl+F12".into(),
+            quick_hotkey: "Ctrl+Shift+F12".into(),
+            correction_hotkey: "Ctrl+F11".into(),
+            quick_correction_hotkey: "Ctrl+Shift+F11".into(),
+            correction_style: CorrectionStyle::Faithful,
+            quick_correction_style: CorrectionStyle::Faithful,
             launch_at_startup: false,
         }
     }
@@ -74,8 +164,17 @@ impl Settings {
     }
 
     pub fn validate_hotkeys(&self) -> Result<()> {
-        crate::platform::hotkey::parse_pair(&self.hotkey, &self.quick_hotkey)?;
+        crate::platform::hotkey::parse_shortcuts(self.shortcuts())?;
         Ok(())
+    }
+
+    pub fn shortcuts(&self) -> [&str; 4] {
+        [
+            &self.hotkey,
+            &self.quick_hotkey,
+            &self.correction_hotkey,
+            &self.quick_correction_hotkey,
+        ]
     }
 
     pub fn endpoint(&self) -> Result<reqwest::Url> {
@@ -218,7 +317,11 @@ mod tests {
         let settings: Settings = serde_json::from_str(
             r#"{"hotkey":"Ctrl+Alt+KeyY","source_language":"Allemand","target_language":"Français"}"#,
         ).unwrap();
-        assert_eq!(settings.quick_hotkey, "Ctrl+Alt+KeyQ");
+        assert_eq!(settings.quick_hotkey, "Ctrl+Shift+F12");
+        assert_eq!(settings.correction_hotkey, "Ctrl+F11");
+        assert_eq!(settings.quick_correction_hotkey, "Ctrl+Shift+F11");
+        assert_eq!(settings.correction_style, CorrectionStyle::Faithful);
+        assert_eq!(settings.quick_correction_style, CorrectionStyle::Faithful);
         assert!(!settings.launch_at_startup);
         assert_eq!(settings.hotkey, "Ctrl+Alt+KeyY");
         assert_eq!(settings.source_language, "Allemand");
@@ -229,7 +332,7 @@ mod tests {
     #[test]
     fn shortcuts_must_be_valid_and_distinct() {
         let mut settings = Settings {
-            quick_hotkey: "Alt+Ctrl+KeyT".into(),
+            quick_hotkey: "Ctrl+F12".into(),
             ..Settings::default()
         };
         assert!(settings.validate_hotkeys().is_err());
@@ -237,5 +340,19 @@ mod tests {
         assert!(settings.validate_hotkeys().is_err());
         settings.quick_hotkey = "Ctrl+Alt+KeyY".into();
         settings.validate_hotkeys().unwrap();
+    }
+
+    #[test]
+    fn existing_translation_shortcuts_and_independent_styles_are_preserved() {
+        let settings: Settings = serde_json::from_str(r#"{"hotkey":"Ctrl+Alt+KeyT","quick_hotkey":"Ctrl+Alt+KeyQ","correction_style":"Professional","quick_correction_style":"Concise"}"#).unwrap();
+        assert_eq!(settings.hotkey, "Ctrl+Alt+KeyT");
+        assert_eq!(settings.quick_hotkey, "Ctrl+Alt+KeyQ");
+        assert_eq!(settings.correction_style, CorrectionStyle::Professional);
+        assert_eq!(settings.quick_correction_style, CorrectionStyle::Concise);
+        settings.validate_hotkeys().unwrap();
+        assert_eq!(
+            serde_json::from_str::<Settings>(&serde_json::to_string(&settings).unwrap()).unwrap(),
+            settings
+        );
     }
 }

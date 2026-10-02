@@ -1,8 +1,8 @@
 use crate::{
     app::Controller,
     platform::hotkey::{self, TranslationMode},
-    settings::{self, Settings},
-    ui::{LanguageSelect, language_select, text_input},
+    settings::{self, CorrectionStyle, Settings},
+    ui::{LanguageSelect, language_select, style_select, text_input},
 };
 use anyhow::{Context as _, Result};
 use gpui_kit::{
@@ -29,6 +29,10 @@ pub struct SettingsView {
     target: LanguageSelect,
     hotkey: String,
     quick_hotkey: String,
+    correction_hotkey: String,
+    quick_correction_hotkey: String,
+    style: LanguageSelect,
+    quick_style: LanguageSelect,
     launch_at_startup: bool,
     recording: Option<TranslationMode>,
     focus: FocusHandle,
@@ -79,6 +83,8 @@ impl SettingsView {
         });
         let source = language_select(&settings.source_language, true, window, cx);
         let target = language_select(&settings.target_language, false, window, cx);
+        let style = style_select(settings.correction_style, window, cx);
+        let quick_style = style_select(settings.quick_correction_style, window, cx);
         let mut subscriptions = vec![
             cx.subscribe_in(
                 &provider,
@@ -150,6 +156,10 @@ impl SettingsView {
             target,
             hotkey: settings.hotkey,
             quick_hotkey: settings.quick_hotkey,
+            correction_hotkey: settings.correction_hotkey,
+            quick_correction_hotkey: settings.quick_correction_hotkey,
+            style,
+            quick_style,
             launch_at_startup: settings.launch_at_startup,
             recording: None,
             focus: cx.focus_handle(),
@@ -212,6 +222,20 @@ impl SettingsView {
                 .clone(),
             hotkey: self.hotkey.clone(),
             quick_hotkey: self.quick_hotkey.clone(),
+            correction_hotkey: self.correction_hotkey.clone(),
+            quick_correction_hotkey: self.quick_correction_hotkey.clone(),
+            correction_style: self
+                .style
+                .read(cx)
+                .selected_value()
+                .and_then(|s| CorrectionStyle::from_label(s))
+                .context("Choisis le mode de correction")?,
+            quick_correction_style: self
+                .quick_style
+                .read(cx)
+                .selected_value()
+                .and_then(|s| CorrectionStyle::from_label(s))
+                .context("Choisis le mode de Quick Check")?,
             launch_at_startup: self.launch_at_startup,
         };
         settings.validate()?;
@@ -335,6 +359,8 @@ impl SettingsView {
                 match mode {
                     TranslationMode::Preview => self.hotkey = candidate,
                     TranslationMode::Quick => self.quick_hotkey = candidate,
+                    TranslationMode::CorrectionPreview => self.correction_hotkey = candidate,
+                    TranslationMode::CorrectionQuick => self.quick_correction_hotkey = candidate,
                 }
                 self.recording = None;
                 self.status = "Raccourci capturé. Enregistre pour l’activer.".into();
@@ -384,6 +410,21 @@ impl Render for SettingsView {
                     .child(Button::new("record-quick").label(if self.recording == Some(TranslationMode::Quick) { "Appuie sur le raccourci…" } else { "Changer le raccourci" })
                         .on_click(cx.listener(|this, _, window, cx| { this.recording = Some(TranslationMode::Quick); this.focus.focus(window, cx); this.status = "Appuie sur la combinaison souhaitée (Échap pour annuler).".into(); cx.notify(); }))))
                 .child(div().text_sm().text_color(cx.theme().muted_foreground).child("Quick Translate remplace directement la sélection en arrière-plan, avec les langues et le provider enregistrés ci-dessus."))
+                .child(div().text_sm().child("Correction — modes par défaut (dans la langue du texte)"))
+                .child(Select::new(&self.style).title_prefix("Aperçu : ").w_full())
+                .child(Select::new(&self.quick_style).title_prefix("Quick Check : ").w_full())
+                .child(div().text_sm().child("Correction fidèle conserve le ton et les formulations ; les autres modes adaptent le style sans changer le sens."))
+                .child(div().text_sm().child("Raccourci global — correction avec aperçu"))
+                .child(h_flex().gap_3()
+                    .child(div().flex_1().child(self.correction_hotkey.clone()))
+                    .child(Button::new("record-correction").label(if self.recording == Some(TranslationMode::CorrectionPreview) { "Appuie sur le raccourci…" } else { "Changer le raccourci" })
+                        .on_click(cx.listener(|this, _, window, cx| { this.recording = Some(TranslationMode::CorrectionPreview); this.focus.focus(window, cx); this.status = "Appuie sur la combinaison souhaitée (Échap pour annuler).".into(); cx.notify(); }))))
+                .child(div().text_sm().child("Raccourci global — Quick Check"))
+                .child(h_flex().gap_3()
+                    .child(div().flex_1().child(self.quick_correction_hotkey.clone()))
+                    .child(Button::new("record-quick-correction").label(if self.recording == Some(TranslationMode::CorrectionQuick) { "Appuie sur le raccourci…" } else { "Changer le raccourci" })
+                        .on_click(cx.listener(|this, _, window, cx| { this.recording = Some(TranslationMode::CorrectionQuick); this.focus.focus(window, cx); this.status = "Appuie sur la combinaison souhaitée (Échap pour annuler).".into(); cx.notify(); }))))
+                .child(div().text_sm().text_color(cx.theme().muted_foreground).child("Les parcours rapides affichent leur état sans prendre le focus, puis remplacent directement la sélection."))
                 .child(Checkbox::new("launch-at-startup").label("Lancer au démarrage de Windows").checked(self.launch_at_startup)
                     .on_click(cx.listener(|this, checked, _, cx| { this.launch_at_startup = *checked; cx.notify(); })))
                 .child(div().text_sm().text_color(cx.theme().muted_foreground).child("Ouvre l’application dans le tray à l’ouverture de ta session. Enregistre pour appliquer cette option."))

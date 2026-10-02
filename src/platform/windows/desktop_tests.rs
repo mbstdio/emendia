@@ -146,9 +146,42 @@ fn clipboard_and_native_edit_round_trip() -> Result<()> {
     unsafe {
         SendMessageW(edit, 0x00b1, WPARAM(6), LPARAM(11));
     }
-    let quick_selection = capture(capture_target()?)?;
+    // Keep a non-activating status popup visible through both capture and paste.
+    let target = capture_target()?;
+    let status_position = status_placement(&target)?;
+    let status = unsafe {
+        CreateWindowExW(
+            WINDOW_EX_STYLE::default(),
+            w!("STATIC"),
+            w!("Correction en cours…"),
+            WS_POPUP,
+            status_position.x as i32,
+            status_position.y as i32,
+            340,
+            160,
+            None,
+            None,
+            None,
+            None,
+        )?
+    };
+    let status_owner = ClipboardOwner(status);
+    show_status_without_activation(status.0 as isize, status_position)?;
+    assert!(status_has_expected_bounds(
+        status.0 as isize,
+        status_position
+    ));
+    assert!(status_is_nonactivating(status.0 as isize));
+    assert_eq!(unsafe { GetForegroundWindow() }, fixture);
+    assert_eq!(
+        destination(fixture.0 as isize)?.focused_control,
+        edit.0 as isize
+    );
+    let quick_selection = capture(target)?;
     assert_eq!(quick_selection.text, "Hello");
     replace_quick(&quick_selection, "Salut")?;
+    assert_eq!(unsafe { GetForegroundWindow() }, fixture);
+    drop(status_owner);
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
         let mut text = [0u16; 128];

@@ -7615,6 +7615,7 @@ dependencies = [
  "global-hotkey",
  "gpui-kit",
  "keyring",
+ "raw-window-handle",
  "reqwest",
  "serde",
  "serde_json",

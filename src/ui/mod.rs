@@ -1,5 +1,6 @@
 pub mod preview;
 pub mod settings;
+pub mod status;
 
 use gpui_kit::{
     component::{IndexPath, input::InputState, select::SelectState},
@@ -7,6 +8,29 @@ use gpui_kit::{
 };
 
 pub type LanguageSelect = Entity<SelectState<Vec<String>>>;
+
+pub fn style_select(
+    value: crate::settings::CorrectionStyle,
+    window: &mut Window,
+    cx: &mut App,
+) -> LanguageSelect {
+    let styles = crate::settings::CorrectionStyle::ALL;
+    let index = styles
+        .iter()
+        .position(|style| *style == value)
+        .map(IndexPath::new);
+    cx.new(|cx| {
+        SelectState::new(
+            styles
+                .into_iter()
+                .map(|s| s.label().to_owned())
+                .collect::<Vec<_>>(),
+            index,
+            window,
+            cx,
+        )
+    })
+}
 
 pub fn language_select(
     value: &str,

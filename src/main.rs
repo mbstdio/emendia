@@ -4,7 +4,7 @@ use anyhow::Result;
 use gpui_kit::*;
 use translation_tool::{
     app::Controller,
-    settings::{Settings, SettingsStore},
+    settings::{Operation, Settings, SettingsStore},
     translation::Translator,
 };
 
@@ -27,8 +27,26 @@ fn main() {
 }
 
 fn run() -> Result<()> {
-    let smoke_quick = std::env::args().any(|argument| argument == "--smoke-test-quick");
-    let smoke_test = smoke_quick || std::env::args().any(|argument| argument == "--smoke-test");
+    let smoke_correction = std::env::args().any(|argument| {
+        matches!(
+            argument.as_str(),
+            "--smoke-test-correction" | "--smoke-test-quick-check"
+        )
+    });
+    let smoke_quick = std::env::args().any(|argument| {
+        matches!(
+            argument.as_str(),
+            "--smoke-test-quick" | "--smoke-test-quick-check"
+        )
+    });
+    let smoke_test = smoke_correction
+        || smoke_quick
+        || std::env::args().any(|argument| argument == "--smoke-test");
+    let operation = if smoke_correction {
+        Operation::Correction
+    } else {
+        Operation::Translation
+    };
     let store = SettingsStore::new()?;
     let (mut settings, first_run, error) = match store.load() {
         Ok(Some(settings)) => (settings, false, None),
@@ -37,7 +55,7 @@ fn run() -> Result<()> {
     };
     if smoke_test {
         settings = Settings {
-            base_url: translation_tool::smoke::local_provider()?,
+            base_url: translation_tool::smoke::local_provider(operation)?,
             model: "smoke-test".into(),
             ..Settings::default()
         };
@@ -57,10 +75,13 @@ fn run() -> Result<()> {
                     let controller = cx.new(|_| controller);
                 controller.update(cx, |controller, cx| {
                     controller.start(first_run || smoke_test, error, cx);
-                     if smoke_quick {
-                         controller.open_smoke_quick(cx).expect("Ouverture du diagnostic Quick Translate");
-                     } else if smoke_test {
-                         controller.open_smoke_preview(cx).expect("Ouverture du diagnostic de traduction");
+                      if smoke_test {
+                          // Let the initial Settings window finish its foreground activation
+                          // before measuring focus preservation by the status popup.
+                          cx.spawn(async move |controller, cx| {
+                              cx.background_executor().timer(std::time::Duration::from_millis(250)).await;
+                              controller.update(cx, |controller, cx| controller.open_smoke(operation, smoke_quick, cx).expect("Ouverture du diagnostic")).expect("Contrôleur de diagnostic");
+                          }).detach();
                      }
                 });
                     // Keep the coordinator alive even while no windows are open.

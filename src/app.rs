@@ -5,9 +5,9 @@ use crate::{
         tray::Tray,
         windows::{self, Selection},
     },
-    settings::{self, Settings, SettingsStore},
+    settings::{self, Operation, Settings, SettingsStore},
     translation::Translator,
-    ui::{preview::Preview, settings::SettingsView},
+    ui::{preview::Preview, settings::SettingsView, status::StatusView},
 };
 use anyhow::{Context as _, Result};
 use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
@@ -25,22 +25,52 @@ pub struct Controller {
     tray: Tray,
     settings_window: Option<(AnyWindowHandle, WeakEntity<SettingsView>)>,
     preview_window: Option<(AnyWindowHandle, WeakEntity<Preview>)>,
+    status_window: Option<(AnyWindowHandle, WeakEntity<StatusView>)>,
     session_active: bool,
+    smoke_layout_check: bool,
 }
 
 impl Controller {
-    pub fn open_smoke_preview(&mut self, cx: &mut Context<Self>) -> Result<()> {
-        self.open_preview(Selection::smoke_fixture()?, cx);
-        Ok(())
-    }
-
-    pub fn open_smoke_quick(&mut self, cx: &mut Context<Self>) -> Result<()> {
-        self.quick_translate(Selection::smoke_fixture()?, self.settings.clone(), cx);
-        // Exercise both trigger paths while the HTTP request is still pending.
-        assert!(self.session_active);
-        self.capture(TranslationMode::Quick, cx);
-        self.capture(TranslationMode::Preview, cx);
-        assert!(self.session_active);
+    pub fn open_smoke(
+        &mut self,
+        operation: Operation,
+        quick: bool,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        self.smoke_layout_check = true;
+        let selection = Selection::smoke_fixture()?;
+        let foreground = windows::foreground_window();
+        let placement = windows::status_placement_for_window(foreground)?;
+        self.open_status(placement, operation, cx)?;
+        assert_eq!(
+            windows::foreground_window(),
+            foreground,
+            "La fenêtre d’état ne doit pas prendre le focus"
+        );
+        let (window, _) = self.status_window.as_ref().unwrap();
+        assert!(
+            window.update(cx, |_, window, _| StatusView::smoke_nonactivating(
+                window, placement
+            ))?
+        );
+        if quick {
+            let mut settings = self.settings.clone();
+            settings.correction_style = settings.quick_correction_style;
+            self.quick_translate_with_key(selection, settings, String::new(), operation, cx);
+            assert!(self.session_active);
+            for mode in [
+                TranslationMode::Quick,
+                TranslationMode::Preview,
+                TranslationMode::CorrectionQuick,
+                TranslationMode::CorrectionPreview,
+            ] {
+                self.capture(mode, cx);
+            }
+            assert!(self.session_active);
+        } else {
+            self.close_status(cx);
+            self.open_preview_result(selection, self.settings.clone(), operation, None, cx);
+        }
         Ok(())
     }
 
@@ -53,6 +83,16 @@ impl Controller {
 
     pub fn smoke_quick_complete(&self, cx: &App) -> bool {
         !self.session_active
+            && self
+                .status_window
+                .as_ref()
+                .and_then(|(_, view)| view.upgrade())
+                .is_some_and(|view| {
+                    let view = view.read(cx);
+                    view.terminal
+                        && view.error
+                        && view.message.starts_with("Remplacement impossible")
+                })
             && self
                 .preview_window
                 .as_ref()
@@ -75,7 +115,9 @@ impl Controller {
             tray: Tray::new()?,
             settings_window: None,
             preview_window: None,
+            status_window: None,
             session_active: false,
+            smoke_layout_check: false,
         })
     }
 
@@ -87,7 +129,7 @@ impl Controller {
     ) {
         let error = self
             .hotkey
-            .change(&self.settings.hotkey, &self.settings.quick_hotkey)
+            .change(self.settings.shortcuts())
             .err()
             .map(|e| e.to_string())
             .or_else(|| self.settings.validate().err().map(|e| e.to_string()))
@@ -121,8 +163,7 @@ impl Controller {
                 let result = if self.hotkey.enabled() {
                     self.hotkey.disable()
                 } else {
-                    self.hotkey
-                        .change(&self.settings.hotkey, &self.settings.quick_hotkey)
+                    self.hotkey.change(self.settings.shortcuts())
                 };
                 self.tray.enabled.set_checked(self.hotkey.enabled());
                 if let Err(error) = result {
@@ -167,16 +208,36 @@ impl Controller {
         let target = match windows::capture_target() {
             Ok(target) => target,
             Err(error) => {
-                self.open_settings(Some(error.to_string()), cx);
+                let status = windows::status_placement_for_window(windows::foreground_window())
+                    .and_then(|placement| self.open_status(placement, mode.operation(), cx));
+                if status.is_ok() {
+                    self.set_status(format!("Capture : {error}"), true, true, cx);
+                } else {
+                    self.open_settings(Some(error.to_string()), cx);
+                }
                 return;
             }
         };
-        let settings = self.settings.clone();
-        let quick_key = if mode == TranslationMode::Quick {
+        let mut settings = self.settings.clone();
+        if mode.quick() {
+            settings.correction_style = settings.quick_correction_style;
+        }
+        let status = windows::status_placement(&target)
+            .and_then(|placement| self.open_status(placement, mode.operation(), cx));
+        if let Err(error) = status {
+            self.open_settings(Some(format!("Fenêtre d’état : {error}")), cx);
+            return;
+        }
+        let quick_key = if mode.quick() {
             match settings::load_api_key(&settings.base_url) {
                 Ok(key) => Some(key),
                 Err(error) => {
-                    self.open_settings(Some(format!("Quick Translate : {error}")), cx);
+                    self.set_status(
+                        format!("{} : {error}", mode.operation().quick_title()),
+                        true,
+                        true,
+                        cx,
+                    );
                     return;
                 }
             }
@@ -196,34 +257,101 @@ impl Controller {
                 this.session_active = false;
                 match result {
                     Ok(selection) => match quick_key {
-                        Some(key) => this.quick_translate_with_key(selection, settings, key, cx),
-                        None => this.open_preview(selection, cx),
+                        Some(key) => this.quick_translate_with_key(
+                            selection,
+                            settings,
+                            key,
+                            mode.operation(),
+                            cx,
+                        ),
+                        None => {
+                            this.close_status(cx);
+                            this.open_preview_result(
+                                selection,
+                                settings,
+                                mode.operation(),
+                                None,
+                                cx,
+                            );
+                        }
                     },
-                    Err(error) => this.open_settings(Some(format!("Capture : {error}")), cx),
+                    Err(error) => this.set_status(format!("Capture : {error}"), true, true, cx),
                 }
             });
         })
         .detach();
     }
 
-    fn open_preview(&mut self, selection: Selection, cx: &mut Context<Self>) {
-        self.open_preview_result(selection, self.settings.clone(), None, cx);
+    fn close_status(&mut self, cx: &mut Context<Self>) {
+        if let Some((window, _)) = self.status_window.take() {
+            let _ = window.update(cx, |_, window, _| window.remove_window());
+        }
     }
 
-    fn quick_translate(
+    fn open_status(
         &mut self,
-        selection: Selection,
-        settings: Settings,
+        placement: windows::Placement,
+        operation: Operation,
         cx: &mut Context<Self>,
-    ) {
-        let key = match settings::load_api_key(&settings.base_url) {
-            Ok(key) => key,
-            Err(error) => {
-                self.open_settings(Some(format!("Quick Translate : {error}")), cx);
-                return;
-            }
+    ) -> Result<()> {
+        self.close_status(cx);
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                point(px(placement.x), px(placement.y)),
+                size(px(placement.width), px(placement.height)),
+            ))),
+            display_id: Some(DisplayId::new(placement.monitor)),
+            kind: WindowKind::PopUp,
+            titlebar: None,
+            focus: false,
+            show: false,
+            is_minimizable: false,
+            is_resizable: false,
+            ..Default::default()
         };
-        self.quick_translate_with_key(selection, settings, key, cx);
+        let controller = cx.entity().downgrade();
+        match gpui_kit::open_window(options, cx, |window, cx| {
+            let view = cx.new(|_| StatusView::new(operation, controller));
+            let weak = view.downgrade();
+            window.on_window_should_close(cx, move |_, cx| {
+                weak.upgrade().is_none_or(|view| view.read(cx).terminal)
+            });
+            view
+        }) {
+            Ok((window, view)) => {
+                match window.update(cx, |_, window, _| StatusView::show(window, placement)) {
+                    Ok(Ok(())) => {
+                        self.status_window = Some((window, view.downgrade()));
+                        Ok(())
+                    }
+                    result => {
+                        let _ = window.update(cx, |_, window, _| window.remove_window());
+                        result.context("Impossible d’afficher la fenêtre d’état")?
+                    }
+                }
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn set_status(&mut self, message: String, terminal: bool, error: bool, cx: &mut Context<Self>) {
+        let Some((window, view)) = &self.status_window else {
+            return;
+        };
+        let _ = view.update(cx, |view, cx| {
+            view.message = message;
+            view.terminal = terminal;
+            view.error = error;
+            cx.notify();
+        });
+        if terminal && !error {
+            let window = *window;
+            cx.spawn(async move |_, cx| {
+                cx.background_executor().timer(Duration::from_secs(2)).await;
+                let _ = window.update(cx, |_, window, _| window.remove_window());
+            })
+            .detach();
+        }
     }
 
     fn quick_translate_with_key(
@@ -231,46 +359,73 @@ impl Controller {
         selection: Selection,
         settings: Settings,
         key: String,
+        operation: Operation,
         cx: &mut Context<Self>,
     ) {
         // Hold the same session gate from capture through replacement. Neither shortcut
         // may start another clipboard operation while this translation is pending.
         self.session_active = true;
+        self.set_status(operation.pending().into(), false, false, cx);
         let translator = self.translator.clone();
-        let runtime = self.runtime.handle().clone();
         let captured = selection.clone();
         let snapshot = settings.clone();
         let task = self.runtime.spawn(async move {
-            let text = translator
-                .translate(&snapshot, &key, &captured.text, None)
-                .await?;
-            let translated = text.clone();
-            let replacement = runtime
-                .spawn_blocking(move || windows::replace_quick(&captured, &translated))
+            translator
+                .process(&snapshot, &key, &captured.text, None, operation)
                 .await
-                .context("Le service de remplacement a échoué")
-                .and_then(|r| r);
-            // Return the translation even when pasting fails, without a second API call.
-            Ok::<_, anyhow::Error>((text, replacement))
         });
         cx.spawn(async move |this, cx| {
             let result = task
                 .await
-                .context("Le service Quick Translate a échoué")
+                .context("Le service de traitement rapide a échoué")
                 .and_then(|r| r);
+            let result = match result {
+                Ok(text) => {
+                    let captured = selection.clone();
+                    let translated = text.clone();
+                    let replacement = this.update(cx, |this, cx| {
+                        this.set_status("Remplacement dans le document…".into(), false, false, cx);
+                        this.runtime
+                            .spawn_blocking(move || windows::replace_quick(&captured, &translated))
+                    });
+                    let replacement = match replacement {
+                        Ok(task) => task
+                            .await
+                            .context("Le service de remplacement a échoué")
+                            .and_then(|r| r),
+                        Err(error) => Err(error),
+                    };
+                    Ok((text, replacement))
+                }
+                Err(error) => Err(error),
+            };
             let _ = this.update(cx, |this, cx| {
                 this.session_active = false;
                 match result {
-                    Ok((_, Ok(()))) => {}
-                    Ok((text, Err(error))) => this.open_preview_result(
-                        selection,
-                        settings,
-                        Some((text, format!("Quick Translate : {error}"))),
+                    Ok((_, Ok(()))) => {
+                        this.set_status("Terminé — remplacement effectué.".into(), true, false, cx)
+                    }
+                    Ok((text, Err(error))) => {
+                        this.set_status(
+                            format!("Remplacement impossible : {error}"),
+                            true,
+                            true,
+                            cx,
+                        );
+                        this.open_preview_result(
+                            selection,
+                            settings,
+                            operation,
+                            Some((text, format!("{} : {error}", operation.quick_title()))),
+                            cx,
+                        )
+                    }
+                    Err(error) => this.set_status(
+                        format!("{} : {error}", operation.quick_title()),
+                        true,
+                        true,
                         cx,
                     ),
-                    Err(error) => {
-                        this.open_settings(Some(format!("Quick Translate : {error}")), cx)
-                    }
                 }
             });
         })
@@ -281,6 +436,7 @@ impl Controller {
         &mut self,
         selection: Selection,
         settings: Settings,
+        operation: Operation,
         result: Option<(String, String)>,
         cx: &mut Context<Self>,
     ) {
@@ -293,7 +449,7 @@ impl Controller {
             display_id: Some(DisplayId::new(placement.monitor)),
             kind: WindowKind::PopUp,
             titlebar: Some(TitlebarOptions {
-                title: Some("Traduction".into()),
+                title: Some(operation.title().into()),
                 ..Default::default()
             }),
             is_minimizable: false,
@@ -303,10 +459,17 @@ impl Controller {
         let controller = cx.entity().downgrade();
         let translator = self.translator.clone();
         let runtime = self.runtime.handle().clone();
+        let smoke_layout_check = self.smoke_layout_check;
         match gpui_kit::open_window(options, cx, |window, cx| {
             cx.new(|cx| {
                 Preview::new(
-                    selection, settings, translator, runtime, controller, window, cx,
+                    selection,
+                    (settings, operation),
+                    translator,
+                    runtime,
+                    controller,
+                    window,
+                    cx,
                 )
             })
         }) {
@@ -317,6 +480,9 @@ impl Controller {
                 cx.defer(move |cx| {
                     let _ = window.update(cx, |_, window, cx| {
                         preview.update(cx, |view, cx| {
+                            if smoke_layout_check {
+                                view.enable_smoke_layout();
+                            }
                             if let Some((text, error)) = result {
                                 view.set_result(text, error, window, cx);
                             } else {
@@ -368,18 +534,17 @@ impl Controller {
     pub fn save_settings(&mut self, next: Settings, key: &str) -> Result<()> {
         next.validate()?;
         next.validate_hotkeys()?;
-        self.hotkey
-            .change_with(&next.hotkey, &next.quick_hotkey, || {
-                startup::configure(next.launch_at_startup, || {
-                    let old_key = settings::load_api_key(&next.base_url)?;
-                    settings::save_api_key(&next.base_url, key)?;
-                    if let Err(error) = self.store.save(&next) {
-                        let _ = settings::save_api_key(&next.base_url, &old_key);
-                        return Err(error);
-                    }
-                    Ok(())
-                })
-            })?;
+        self.hotkey.change_with(next.shortcuts(), || {
+            startup::configure(next.launch_at_startup, || {
+                let old_key = settings::load_api_key(&next.base_url)?;
+                settings::save_api_key(&next.base_url, key)?;
+                if let Err(error) = self.store.save(&next) {
+                    let _ = settings::save_api_key(&next.base_url, &old_key);
+                    return Err(error);
+                }
+                Ok(())
+            })
+        })?;
         self.settings = next;
         self.tray.enabled.set_checked(true);
         Ok(())

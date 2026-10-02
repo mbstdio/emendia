@@ -1,9 +1,9 @@
 use crate::{
     app::Controller,
     platform::windows::{self, Selection},
-    settings::{self, Settings},
+    settings::{self, CorrectionStyle, Operation, Settings},
     translation::Translator,
-    ui::{LanguageSelect, language_select},
+    ui::{LanguageSelect, language_select, style_select},
 };
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
@@ -15,6 +15,7 @@ use gpui_kit::{
     },
     *,
 };
+use std::{cell::RefCell, rc::Rc};
 use tokio::{runtime::Handle, task::AbortHandle};
 
 pub struct Preview {
@@ -25,6 +26,8 @@ pub struct Preview {
     controller: WeakEntity<Controller>,
     source: LanguageSelect,
     target: LanguageSelect,
+    style: LanguageSelect,
+    operation: Operation,
     translation: Entity<TextareaState>,
     status: String,
     busy: bool,
@@ -34,10 +37,15 @@ pub struct Preview {
     original_visible: bool,
     request_version: u64,
     pending: Option<AbortHandle>,
+    smoke_layout: Option<Rc<RefCell<Vec<Bounds<Pixels>>>>>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl Preview {
+    pub(crate) fn enable_smoke_layout(&mut self) {
+        self.smoke_layout = Some(Rc::new(RefCell::new(Vec::new())));
+    }
+
     pub fn set_result(
         &mut self,
         text: String,
@@ -52,26 +60,53 @@ impl Preview {
     }
 
     pub(crate) fn smoke_result(&self, cx: &App) -> bool {
-        !self.busy && self.translation.read(cx).value() == "Hello, this is a translation test."
+        let expected = match self.operation {
+            Operation::Translation => "Hello, this is a translation test.",
+            Operation::Correction => "Bonjour, ceci est un test de correction.",
+        };
+        if !self.busy && self.translation.read(cx).value() == expected {
+            if let Some(layout) = &self.smoke_layout {
+                let bounds = layout.borrow();
+                let Some(header) = bounds.first() else {
+                    return false;
+                };
+                let Some(editor) = bounds.get(2) else {
+                    return false;
+                };
+                assert!(
+                    header.size.height <= px(40.),
+                    "Le sélecteur doit rester compact : {header:?}, éditeur : {editor:?}"
+                );
+                assert!(
+                    editor.size.height >= px(120.),
+                    "L’éditeur doit occuper l’espace libre : {editor:?}"
+                );
+            }
+            true
+        } else {
+            false
+        }
     }
 
     pub(crate) fn smoke_recovery_result(&self, cx: &App) -> bool {
-        self.smoke_result(cx) && self.status.starts_with("Quick Translate :")
+        self.smoke_result(cx) && self.status.starts_with(self.operation.quick_title())
     }
 
     pub fn new(
         selection: Selection,
-        settings: Settings,
+        configuration: (Settings, Operation),
         translator: Translator,
         runtime: Handle,
         controller: WeakEntity<Controller>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let (settings, operation) = configuration;
         let source = language_select(&settings.source_language, true, window, cx);
         let target = language_select(&settings.target_language, false, window, cx);
+        let style = style_select(settings.correction_style, window, cx);
         let translation =
-            cx.new(|cx| TextareaState::new(window, cx).placeholder("Traduction en cours…"));
+            cx.new(|cx| TextareaState::new(window, cx).placeholder(operation.pending()));
         let focus = cx.focus_handle();
         focus.focus(window, cx);
         let weak = cx.entity().downgrade();
@@ -85,6 +120,18 @@ impl Preview {
                 |this, _, event: &SelectEvent<Vec<String>>, window, cx| {
                     if let SelectEvent::Confirm(Some(language)) = event {
                         this.settings.source_language = language.clone();
+                        this.translate(false, window, cx);
+                    }
+                },
+            ),
+            cx.subscribe_in(
+                &style,
+                window,
+                |this, _, event: &SelectEvent<Vec<String>>, window, cx| {
+                    if let SelectEvent::Confirm(Some(label)) = event
+                        && let Some(style) = CorrectionStyle::from_label(label)
+                    {
+                        this.settings.correction_style = style;
                         this.translate(false, window, cx);
                     }
                 },
@@ -108,8 +155,10 @@ impl Preview {
             controller,
             source,
             target,
+            style,
+            operation,
             translation,
-            status: "Traduction en cours…".into(),
+            status: operation.pending().into(),
             busy: false,
             replacing: false,
             copying: false,
@@ -117,6 +166,7 @@ impl Preview {
             original_visible: false,
             request_version: 0,
             pending: None,
+            smoke_layout: None,
             _subscriptions: subscriptions,
         }
     }
@@ -159,12 +209,13 @@ impl Preview {
         self.status = if alternative {
             "Nouvelle proposition en cours…"
         } else {
-            "Traduction en cours…"
+            self.operation.pending()
         }
         .into();
+        let operation = self.operation;
         let task = self.runtime.spawn(async move {
             translator
-                .translate(&settings, &key, &original, previous.as_deref())
+                .process(&settings, &key, &original, previous.as_deref(), operation)
                 .await
         });
         self.pending = Some(task.abort_handle());
@@ -181,13 +232,11 @@ impl Preview {
                         this.translation
                             .update(cx, |state, cx| state.set_value(text, window, cx));
                         this.status =
-                            "Prêt — tu peux modifier la traduction avant de remplacer.".into();
+                            "Prêt — tu peux modifier le résultat avant de remplacer.".into();
                     }
                     Ok(Err(error)) => this.status = error.to_string(),
-                    Err(error) if error.is_cancelled() => {
-                        this.status = "Traduction annulée.".into()
-                    }
-                    Err(_) => this.status = "Le service de traduction a échoué.".into(),
+                    Err(error) if error.is_cancelled() => this.status = "Traitement annulé.".into(),
+                    Err(_) => this.status = "Le service de traitement a échoué.".into(),
                 }
                 cx.notify();
             });
@@ -240,7 +289,7 @@ impl Preview {
             let _ = this.update_in(cx, |this, _, cx| {
                 this.copying = false;
                 this.status = match result {
-                    Ok(Ok(())) => "Traduction copiée dans le presse-papiers.".into(),
+                    Ok(Ok(())) => "Résultat copié dans le presse-papiers.".into(),
                     Ok(Err(error)) => error.to_string(),
                     Err(_) => "Copie impossible.".into(),
                 };
@@ -270,6 +319,11 @@ impl Render for Preview {
             .text_color(cx.theme().foreground)
             .p_4()
             .gap_3()
+            .when_some(self.smoke_layout.clone(), |view, layout| {
+                view.on_children_prepainted(move |bounds, _, _| {
+                    *layout.borrow_mut() = bounds;
+                })
+            })
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 if event.keystroke.key == "escape" && !this.replacing {
@@ -277,22 +331,38 @@ impl Render for Preview {
                     cx.stop_propagation();
                 }
             }))
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Select::new(&self.source)
-                            .title_prefix("Source : ")
+            .when(self.operation == Operation::Correction, |view| {
+                view.child(
+                    // Select's outer element uses size_full: constrain its row so it
+                    // cannot consume the editor's vertical space in this column.
+                    h_flex().h_8().flex_shrink_0().child(
+                        Select::new(&self.style)
+                            .title_prefix("Mode : ")
                             .disabled(self.replacing || self.copying)
-                            .flex_1(),
-                    )
-                    .child(
-                        Select::new(&self.target)
-                            .title_prefix("Cible : ")
-                            .disabled(self.replacing || self.copying)
-                            .flex_1(),
+                            .w_full(),
                     ),
-            )
+                )
+            })
+            .when(self.operation == Operation::Translation, |view| {
+                view.child(
+                    h_flex()
+                        .h_8()
+                        .flex_shrink_0()
+                        .gap_2()
+                        .child(
+                            Select::new(&self.source)
+                                .title_prefix("Source : ")
+                                .disabled(self.replacing || self.copying)
+                                .flex_1(),
+                        )
+                        .child(
+                            Select::new(&self.target)
+                                .title_prefix("Cible : ")
+                                .disabled(self.replacing || self.copying)
+                                .flex_1(),
+                        ),
+                )
+            })
             .child(
                 h_flex()
                     .justify_between()

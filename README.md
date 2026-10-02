@@ -1,13 +1,15 @@
 # Translation Tool
 
-Application Windows de traduction contextuelle, écrite en **Rust avec GPUI**.
+Application Windows de traduction et de correction contextuelles, écrite en **Rust avec GPUI**.
 
-Sélectionner un texte → **Ctrl+Alt+T** → aperçu près de la sélection → éditer ou demander une nouvelle proposition → **Remplacer**.
+Sélectionner un texte → **Ctrl+F12** pour traduire ou **Ctrl+F11** pour corriger → aperçu près de la sélection → éditer ou demander une nouvelle proposition → **Remplacer**.
 
 ## Fonctionnalités
 
-- Hotkey globale configurable, avec capture des touches et détection des conflits.
-- **Quick Translate** : second raccourci configurable (**Ctrl+Alt+Q** par défaut) pour traduire et remplacer directement la sélection en arrière-plan, sans validation.
+- Quatre hotkeys globales configurables, avec capture des touches et détection des conflits.
+- **Quick Translate** (**Ctrl+Maj+F12**) et **Quick Check** (**Ctrl+Maj+F11**) : traitement et remplacement directs de la sélection, sans validation.
+- Correction orthographique, grammaticale et de ponctuation dans la langue du texte, avec cinq modes : **Correction fidèle** (défaut), **Plus fluide**, **Professionnel**, **Décontracté**, **Concis**.
+- Fenêtre d’état en bas à droite du moniteur du document, sans prise de focus : capture, traitement, remplacement, succès ou erreur. Pour les parcours avec validation, l’aperçu prend le relais après la capture.
 - Fenêtre compacte et déplaçable, placée près de la sélection via Windows UI Automation ; repli près du curseur lorsque les coordonnées ne sont pas accessibles.
 - Positionnement dans la zone utile du moniteur, avec prise en compte du DPI.
 - Langue source automatique ou explicite et langue cible explicite, configurables dans les paramètres et dans l’aperçu.
@@ -88,7 +90,16 @@ L’URL doit être une **URL de base**, sans `/chat/completions` à la fin. Pour
 
 Le bouton **Tester la connexion** réalise une vraie petite traduction avec les valeurs du formulaire, sans devoir les enregistrer. Avec OpenAI, cet appel est facturé selon le modèle et ton compte API. Un abonnement ChatGPT ne remplace pas une clé et un accès à l’API.
 
-**Enregistrer** persiste les paramètres et active les deux raccourcis. Ils doivent être différents. Les changements de langues dans l’aperçu concernent seulement la traduction en cours. Si un nouveau raccourci est déjà réservé, les anciens restent actifs. Le menu **Raccourcis actifs** du tray active/désactive les deux ensemble.
+**Enregistrer** persiste les paramètres et active les quatre raccourcis. Ils doivent tous être différents. Les changements de langues ou de mode dans l’aperçu concernent seulement la session en cours. Si un nouveau raccourci est déjà réservé, les anciens restent actifs. Le menu **Raccourcis actifs** du tray active/désactive les quatre ensemble.
+
+| Action | Raccourci par défaut |
+|---|---|
+| Traduction avec aperçu | **Ctrl+F12** |
+| Quick Translate | **Ctrl+Maj+F12** |
+| Correction avec aperçu | **Ctrl+F11** |
+| Quick Check | **Ctrl+Maj+F11** |
+
+Les configurations existantes conservent leurs raccourcis de traduction enregistrés. Les nouveaux champs absents reçoivent les valeurs par défaut ; un conflit avec un raccourci existant est signalé dans les paramètres.
 
 Les préréglages proposent une URL et un modèle d’exemple ; les champs restent éditables. Une modification d’URL recharge la clé associée à cet endpoint, afin de ne pas envoyer la clé d’un autre provider. Effacer la clé puis enregistrer supprime l’identifiant de cet endpoint.
 
@@ -98,7 +109,7 @@ Configuration : `%APPDATA%\TranslationTool\TranslationTool\config\settings.json`
 
 1. Sélectionner du texte dans un éditeur, un champ de navigateur, etc.
 2. Appuyer sur la hotkey, puis **relâcher ses touches**.
-3. L’aperçu apparaît dès la capture terminée et affiche l’état de traduction.
+3. La fenêtre d’état apparaît pendant la capture ; l’aperçu prend le relais dès la capture terminée et affiche l’état de traduction.
 4. Modifier les langues si nécessaire : la requête précédente est annulée et une nouvelle traduction démarre.
 5. Modifier directement la traduction ou cliquer sur **Nouvelle proposition** pour une alternative basée sur le texte original et la proposition actuelle.
 6. Cliquer sur **Remplacer** pour revenir à la sélection d’origine, ou **Copier** pour coller manuellement.
@@ -108,12 +119,28 @@ Configuration : `%APPDATA%\TranslationTool\TranslationTool\config\settings.json`
 ### Quick Translate
 
 1. Enregistrer le provider, le modèle, les langues source/cible et le raccourci **Quick Translate** dans les paramètres.
-2. Sélectionner du texte puis appuyer sur **Ctrl+Alt+Q** (ou le raccourci configuré) et relâcher ses touches.
-3. Rester dans le document avec la même sélection : la traduction remplace automatiquement le texte, sans aperçu ni clic de validation.
+2. Sélectionner du texte puis appuyer sur **Ctrl+Maj+F12** (ou le raccourci configuré) et relâcher ses touches.
+3. Rester dans le document avec la même sélection : la traduction remplace automatiquement le texte, sans clic de validation. La fenêtre d’état indique le traitement et le remplacement sans prendre le focus.
 
-Les paramètres enregistrés sont figés au déclenchement. Pendant une traduction rapide, les nouveaux déclenchements sont ignorés. Si un aperçu est déjà ouvert, l’un ou l’autre raccourci le remet au premier plan. Les anciennes configurations reçoivent automatiquement le raccourci par défaut ; un conflit est signalé dans les paramètres.
+Les paramètres enregistrés sont figés au déclenchement. Pendant la capture ou un traitement rapide, les nouveaux déclenchements sont ignorés. Si un aperçu est déjà ouvert, chacun des quatre raccourcis le remet au premier plan.
 
-Une erreur de traduction ouvre les paramètres avec le problème. Si le remplacement échoue (sélection modifiée, changement de fenêtre, etc.), l’aperçu s’ouvre avec la traduction déjà obtenue et l’erreur, pour permettre **Copier** ou un remplacement manuel sans nouvelle requête. Quick Translate ne reprend pas le focus d’une autre application pour coller. Après un remplacement réussi, la traduction reste dans le presse-papiers.
+Après le remplacement, une confirmation apparaît pendant deux secondes puis disparaît. Une erreur de capture ou de traitement reste visible dans la fenêtre d’état, avec **Paramètres** et **Fermer**. Si le remplacement échoue (sélection modifiée, changement de fenêtre, etc.), l’aperçu s’ouvre avec le résultat déjà obtenu et l’erreur, pour permettre **Copier** ou un remplacement manuel sans nouvelle requête. Les parcours rapides ne reprennent pas le focus d’une autre application pour coller. Après un remplacement réussi, le résultat reste dans le presse-papiers.
+
+### Correction et Quick Check
+
+**Ctrl+F11** ouvre un aperçu de correction. Le sélecteur **Mode** remplace les sélecteurs de langues : la correction détecte la langue du texte et ne traduit pas. Changer de mode annule la requête précédente et repart du texte original. Le résultat peut être édité, copié ou remplacé ; **Nouvelle proposition** demande une nouvelle révision sans imposer de reformulations inutiles en mode fidèle. Échap ou **Annuler** ferme l’aperçu et annule la requête.
+
+| Mode | Comportement |
+|---|---|
+| Correction fidèle | Corrige orthographe, grammaire et ponctuation en préservant le ton, le registre et les formulations autant que possible ; laisse les passages corrects inchangés |
+| Plus fluide | Reformulation légère pour améliorer la lisibilité, en conservant le ton |
+| Professionnel | Ton soigné adapté aux échanges de travail |
+| Décontracté | Ton naturel et informel |
+| Concis | Formulations plus courtes sans perte des informations essentielles |
+
+Tous les modes demandent au modèle de préserver le sens, les paragraphes et la mise en forme, sans inventer d’informations. La qualité de correction dépend du modèle configuré.
+
+Les paramètres définissent indépendamment le mode par défaut de l’aperçu et celui de **Quick Check** ; tous deux démarrent avec **Correction fidèle**. **Ctrl+Maj+F11** utilise le mode Quick Check enregistré et remplace directement la sélection, avec le même retour d’état et le même aperçu de récupération que Quick Translate.
 
 ### Intégration avec les autres applications
 
@@ -144,14 +171,15 @@ src/
   main.rs                  Démarrage GPUI, runtime et durée de vie
   app.rs                   Coordination des fenêtres, tray et captures
   settings.rs              Configuration JSON et identifiants Windows
-  translation.rs           Client OpenAI-compatible et prompts
+  translation.rs           Client OpenAI-compatible et prompts de traduction/correction
   ui/
     settings.rs            Formulaire et capture de hotkey
-    preview.rs             Aperçu éditable et tâches annulables
+    preview.rs             Aperçu traduction/correction et tâches annulables
+    status.rs              Fenêtre d’état non activante
     mod.rs                 Construction des champs et sélecteurs
   platform/
     windows.rs             Capture, identité, placement et remplacement
-    hotkey.rs              Réservation transactionnelle de la hotkey
+    hotkey.rs              Réservation transactionnelle des quatre hotkeys
     startup.rs             Lancement à l’ouverture de session Windows
     tray.rs                Icône et menu
 ```
@@ -164,13 +192,17 @@ cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
 cargo run --locked -- --smoke-test
 cargo run --locked -- --smoke-test-quick
+cargo run --locked -- --smoke-test-correction
+cargo run --locked -- --smoke-test-quick-check
 ```
 
 Les tests HTTP utilisent un vrai serveur simulé sur localhost ; aucune clé ni API externe n’est nécessaire. Le smoke test ouvre les paramètres, un aperçu avec texte fictif et le tray pendant trois secondes. Il vérifie que la réponse d’un provider simulé sur localhost est visible, puis quitte, sans enregistrer de paramètres ni contacter un provider externe. L’aperçu de diagnostic n’a aucune destination de remplacement.
 
-Le smoke test Quick Translate vérifie le parcours en arrière-plan puis l’aperçu de récupération : la destination fictive refuse le collage et la traduction obtenue reste visible avec l’erreur, sans second appel au provider.
+Les quatre smoke tests vérifient aussi que la fenêtre d’état est visible, conserve le focus de la fenêtre d’origine et refuse l’activation à la souris. Les tests de correction vérifient l’aperçu avec une réponse fictive dans la langue source. Les parcours rapides vérifient la fenêtre d’erreur et l’aperçu de récupération : la destination fictive refuse le collage et le résultat obtenu reste visible sans second appel au provider.
 
-Un test Windows supplémentaire lance son propre éditeur natif dans un processus séparé et vérifie capture, collage et restauration du presse-papiers (texte et bitmap). Il nécessite une session graphique interactive, prend temporairement le focus et sauvegarde/restaure le presse-papiers ; ne pas utiliser d’autre application pendant son exécution :
+Les smoke tests mesurent également le layout réel des aperçus : la ligne des sélecteurs doit rester compacte et l’éditeur doit récupérer l’espace vertical disponible.
+
+Un test Windows supplémentaire lance son propre éditeur natif dans un processus séparé et vérifie capture, collage, maintien du focus avec une fenêtre d’état visible et restauration du presse-papiers (texte et bitmap). Il nécessite une session graphique interactive, prend temporairement le focus et sauvegarde/restaure le presse-papiers ; ne pas utiliser d’autre application pendant son exécution :
 
 ```powershell
 cargo test --locked --lib clipboard_and_native_edit_round_trip -- --ignored --nocapture --test-threads=1
@@ -180,7 +212,9 @@ Tests manuels de bout en bout recommandés :
 
 - Bloc-notes : capturer une sélection, éditer la traduction et remplacer ; annuler sans changement.
 - Quick Translate : vérifier le remplacement direct avec les langues enregistrées ; changer la sélection ou la fenêtre pendant la requête et vérifier l’aperçu de récupération ; déclencher plusieurs fois pour vérifier qu’une seule traduction est effectuée.
-- Raccourcis : configurer deux combinaisons distinctes, les échanger, tester un conflit et activer/désactiver les deux depuis le tray.
+- Correction : vérifier les cinq modes, le maintien de la langue, le changement rapide de mode, l’édition et l’annulation ; vérifier que Quick Check utilise son mode indépendant.
+- État : vérifier capture, traitement, remplacement et confirmation brève ; cliquer sur la fenêtre pendant un parcours rapide et vérifier que le document conserve le focus ; tester une erreur persistante et sa fermeture.
+- Raccourcis : configurer quatre combinaisons distinctes, les échanger, tester un conflit et activer/désactiver les quatre depuis le tray.
 - Démarrage Windows : cocher l’option et enregistrer, rouvrir les paramètres puis vérifier le lancement dans le tray après une nouvelle ouverture de session ; décocher et enregistrer pour vérifier sa suppression.
 - Champ éditable du navigateur et éditeur de code : vérifier le retour de focus.
 - Changer la sélection ou le document pendant l’aperçu : le remplacement doit être refusé si le changement est détecté.

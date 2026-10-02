@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-pub fn local_provider() -> Result<String> {
+pub fn local_provider(operation: crate::settings::Operation) -> Result<String> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let address = listener.local_addr()?;
     listener.set_nonblocking(true)?;
@@ -19,7 +19,10 @@ pub fn local_provider() -> Result<String> {
                     let _ = socket.set_read_timeout(Some(Duration::from_secs(2)));
                     let mut buffer = [0u8; 8192];
                     if socket.read(&mut buffer).is_ok() {
-                        let body = r#"{"choices":[{"message":{"content":"Hello, this is a translation test."}}]}"#;
+                        let body = match operation {
+                            crate::settings::Operation::Translation => r#"{"choices":[{"message":{"content":"Hello, this is a translation test."}}]}"#,
+                            crate::settings::Operation::Correction => r#"{"choices":[{"message":{"content":"Bonjour, ceci est un test de correction."}}]}"#,
+                        };
                         let response = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
                         let _ = socket.write_all(response.as_bytes());
                     }
