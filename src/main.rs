@@ -1,12 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use anyhow::Result;
-use gpui_kit::*;
-use translation_tool::{
+use emendia::{
     app::Controller,
     settings::{Operation, Settings, SettingsStore},
     translation::Translator,
 };
+use gpui_kit::*;
 
 struct AppController {
     _controller: Entity<Controller>,
@@ -17,11 +17,11 @@ fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "translation_tool=info".into()),
+                .unwrap_or_else(|_| "emendia=info".into()),
         )
         .init();
     if let Err(error) = run() {
-        tracing::error!(%error, "Démarrage impossible");
+        tracing::error!(%error, "Unable to start Emendia");
         std::process::exit(1);
     }
 }
@@ -48,17 +48,26 @@ fn run() -> Result<()> {
         Operation::Translation
     };
     let store = SettingsStore::new()?;
-    let (mut settings, first_run, error) = match store.load() {
+    let (mut settings, first_run, mut error) = match store.load() {
         Ok(Some(settings)) => (settings, false, None),
         Ok(None) => (Settings::default(), true, None),
         Err(error) => (Settings::default(), true, Some(error.to_string())),
     };
     if smoke_test {
         settings = Settings {
-            base_url: translation_tool::smoke::local_provider(operation)?,
+            base_url: emendia::smoke::local_provider(operation)?,
             model: "smoke-test".into(),
             ..Settings::default()
         };
+    }
+    if std::env::args().any(|argument| argument == "--ui-language=en") {
+        settings.ui_language = emendia::i18n::UiLanguage::English;
+    } else if std::env::args().any(|argument| argument == "--ui-language=fr") {
+        settings.ui_language = emendia::i18n::UiLanguage::French;
+    }
+    emendia::i18n::apply(settings.ui_language);
+    if !smoke_test && let Err(migration) = emendia::platform::startup::migrate_legacy() {
+        error = Some(migration.to_string());
     }
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -80,7 +89,7 @@ fn run() -> Result<()> {
                           // before measuring focus preservation by the status popup.
                           cx.spawn(async move |controller, cx| {
                               cx.background_executor().timer(std::time::Duration::from_millis(250)).await;
-                              controller.update(cx, |controller, cx| controller.open_smoke(operation, smoke_quick, cx).expect("Ouverture du diagnostic")).expect("Contrôleur de diagnostic");
+                              controller.update(cx, |controller, cx| controller.open_smoke(operation, smoke_quick, cx).expect("Open smoke test")).expect("Smoke test controller");
                           }).detach();
                      }
                 });
@@ -94,13 +103,13 @@ fn run() -> Result<()> {
                                 .timer(std::time::Duration::from_secs(3))
                                 .await;
                             cx.update(|cx| {
-                            assert!(cx.windows().len() >= 2, "Paramètres et aperçu doivent être ouverts");
-                             assert!(cx.global::<AppController>()._controller.read(cx).smoke_preview_complete(cx), "La traduction du provider simulé doit être visible dans l’aperçu");
+                            assert!(cx.windows().len() >= 2, "Settings and preview must be open");
+                             assert!(cx.global::<AppController>()._controller.read(cx).smoke_preview_complete(cx), "The mock provider result must be visible in the preview");
                              if smoke_quick {
-                                 assert!(cx.global::<AppController>()._controller.read(cx).smoke_quick_complete(cx), "Un collage impossible doit conserver la traduction et afficher l’erreur sans nouvelle requête");
+                                 assert!(cx.global::<AppController>()._controller.read(cx).smoke_quick_complete(cx), "Failed paste must preserve the result and show an error without another request");
                              }
                                 tracing::info!(
-                                "Smoke test GPUI : paramètres, aperçu traduit, tray et boucle d’événements actifs"
+                                "GPUI smoke test: settings, translated preview, tray and event loop active"
                                 );
                                  if !smoke_quick {
                                      cx.quit();
@@ -109,8 +118,8 @@ fn run() -> Result<()> {
                              if smoke_quick {
                                  cx.background_executor().timer(std::time::Duration::from_secs(4)).await;
                                  cx.update(|cx| {
-                                     assert!(cx.global::<AppController>()._controller.read(cx).smoke_status_closed(), "La popup d’erreur doit se fermer automatiquement");
-                                     assert!(cx.global::<AppController>()._controller.read(cx).smoke_preview_complete(cx), "Le résultat doit rester disponible après fermeture de la popup d’erreur");
+                                     assert!(cx.global::<AppController>()._controller.read(cx).smoke_status_closed(), "The error popup must close automatically");
+                                     assert!(cx.global::<AppController>()._controller.read(cx).smoke_preview_complete(cx), "The result must remain available after the error popup closes");
                                      cx.quit();
                                  });
                              }
@@ -119,7 +128,7 @@ fn run() -> Result<()> {
                     }
                 }
                 Err(error) => {
-                    tracing::error!(%error, "Initialisation Windows impossible");
+                    tracing::error!(%error, "Unable to initialize Windows integration");
                     cx.quit();
                 }
             }

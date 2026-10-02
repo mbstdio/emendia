@@ -1605,6 +1605,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "emendia"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "directories",
+ "global-hotkey",
+ "gpui-kit",
+ "keyring",
+ "raw-window-handle",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "tray-icon",
+ "windows 0.58.0",
+]
+
+[[package]]
 name = "encoding_rs"
 version = "0.8.42"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7604,27 +7625,6 @@ dependencies = [
  "tracing",
  "tracing-core",
  "tracing-log",
-]
-
-[[package]]
-name = "translation-tool"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "directories",
- "global-hotkey",
- "gpui-kit",
- "keyring",
- "raw-window-handle",
- "reqwest",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "tray-icon",
- "windows 0.58.0",
 ]
 
 [[package]]

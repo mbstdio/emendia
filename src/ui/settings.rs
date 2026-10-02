@@ -1,3 +1,4 @@
+use crate::i18n::{UiLanguage, canonical_language, t};
 use crate::{
     app::Controller,
     platform::hotkey::{self, TranslationMode},
@@ -17,7 +18,7 @@ use gpui_kit::{
 };
 use tokio::task::AbortHandle;
 
-const PROVIDERS: &[&str] = &["OpenAI", "LM Studio", "Ollama", "Personnalisé"];
+const PROVIDERS: &[&str] = &["OpenAI", "LM Studio", "Ollama", "Custom"];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Category {
@@ -39,21 +40,21 @@ impl Category {
 
     fn title(self) -> &'static str {
         match self {
-            Self::General => "Général",
-            Self::Provider => "Provider IA",
-            Self::Translation => "Traduction",
-            Self::Correction => "Correction",
-            Self::Shortcuts => "Raccourcis",
+            Self::General => t("General"),
+            Self::Provider => t("AI Provider"),
+            Self::Translation => t("Translation"),
+            Self::Correction => t("Proofreading"),
+            Self::Shortcuts => t("Shortcuts"),
         }
     }
 
     fn description(self) -> &'static str {
         match self {
-            Self::General => "Personnalise l’apparence et le démarrage de l’application.",
-            Self::Provider => "Configure le modèle utilisé pour traduire et corriger tes textes.",
-            Self::Translation => "Choisis les langues et les raccourcis de traduction.",
-            Self::Correction => "Adapte le style de correction et ses raccourcis.",
-            Self::Shortcuts => "Retrouve tous tes raccourcis globaux au même endroit.",
+            Self::General => t("Customize the application's appearance and startup."),
+            Self::Provider => t("Configure the model used to translate and proofread your text."),
+            Self::Translation => t("Choose translation languages and shortcuts."),
+            Self::Correction => t("Adjust proofreading styles and shortcuts."),
+            Self::Shortcuts => t("Find all your global shortcuts in one place."),
         }
     }
 
@@ -86,6 +87,8 @@ pub struct SettingsView {
     launch_at_startup: bool,
     theme: LanguageSelect,
     theme_preference: ThemePreference,
+    language: LanguageSelect,
+    ui_language: UiLanguage,
     category: Category,
     recording: Option<TranslationMode>,
     focus: FocusHandle,
@@ -114,7 +117,7 @@ impl SettingsView {
             SelectState::new(
                 PROVIDERS
                     .iter()
-                    .map(|p| (*p).into())
+                    .map(|p| t(p).into())
                     .collect::<Vec<String>>(),
                 Some(IndexPath::new(preset)),
                 window,
@@ -130,7 +133,7 @@ impl SettingsView {
         let api_key = cx.new(|cx| {
             let mut input = InputState::new(window, cx)
                 .masked(true)
-                .placeholder("Facultative pour un serveur local");
+                .placeholder(t("Optional for a local server"));
             input.set_value(key, window, cx);
             input
         });
@@ -152,7 +155,60 @@ impl SettingsView {
                 cx,
             )
         });
+        let language = cx.new(|cx| {
+            SelectState::new(
+                UiLanguage::ALL
+                    .into_iter()
+                    .map(|v| v.label().to_owned())
+                    .collect::<Vec<_>>(),
+                UiLanguage::ALL
+                    .iter()
+                    .position(|v| *v == settings.ui_language)
+                    .map(IndexPath::new),
+                window,
+                cx,
+            )
+        });
         let mut subscriptions = vec![
+            cx.subscribe_in(
+                &language,
+                window,
+                |this, select, event: &SelectEvent<Vec<String>>, window, cx| {
+                    if let SelectEvent::Confirm(Some(_)) = event {
+                        let Some(index) = select.read(cx).selected_index(cx) else {
+                            return;
+                        };
+                        let Some(language) = UiLanguage::ALL.get(index.row).copied() else {
+                            return;
+                        };
+                        match this
+                            .controller
+                            .update(cx, |app, cx| app.set_language(language, cx))
+                            .and_then(|r| r)
+                        {
+                            Ok(()) => {
+                                this.ui_language = language;
+                                this.localize(window, cx);
+                                this.status = t("Interface language applied and saved.").into();
+                            }
+                            Err(error) => {
+                                this.language.update(cx, |state, cx| {
+                                    state.set_selected_index(
+                                        UiLanguage::ALL
+                                            .iter()
+                                            .position(|v| *v == this.ui_language)
+                                            .map(IndexPath::new),
+                                        window,
+                                        cx,
+                                    )
+                                });
+                                this.status = error.to_string();
+                            }
+                        }
+                        cx.notify();
+                    }
+                },
+            ),
             cx.subscribe_in(
                 &theme,
                 window,
@@ -171,7 +227,7 @@ impl SettingsView {
                         {
                             Ok(()) => {
                                 this.theme_preference = theme;
-                                this.status = "Thème appliqué et enregistré.".into();
+                                this.status = t("Theme applied and saved.").into();
                             }
                             Err(error) => {
                                 let index = ThemePreference::ALL
@@ -207,7 +263,7 @@ impl SettingsView {
                                 .update(cx, |state, cx| state.set_value(model, window, cx));
                             this.reload_key(window, cx);
                             this.status =
-                                "Renseigne le nom exact du modèle disponible sur ce provider."
+                                t("Enter the exact model name available from this provider.")
                                     .into();
                         }
                         cx.notify();
@@ -265,11 +321,13 @@ impl SettingsView {
             launch_at_startup: settings.launch_at_startup,
             theme,
             theme_preference: settings.theme,
+            language,
+            ui_language: settings.ui_language,
             category: Category::General,
             recording: None,
             focus: cx.focus_handle(),
             status: error.or(key_error).unwrap_or_else(|| {
-                "Configure le provider, puis teste la connexion et enregistre.".into()
+                t("Configure the provider, then test the connection and save.").into()
             }),
             testing: false,
             pending: None,
@@ -298,7 +356,7 @@ impl SettingsView {
             task.abort();
         }
         if self.testing {
-            self.status = "Configuration modifiée ; relance le test de connexion.".into();
+            self.status = t("Configuration changed; run the connection test again.").into();
         }
         self.testing = false;
     }
@@ -317,14 +375,14 @@ impl SettingsView {
                 .source
                 .read(cx)
                 .selected_value()
-                .context("Choisis la langue source")?
-                .clone(),
+                .map(|value| canonical_language(value).to_owned())
+                .context(t("Choose the source language"))?,
             target_language: self
                 .target
                 .read(cx)
                 .selected_value()
-                .context("Choisis la langue cible")?
-                .clone(),
+                .map(|value| canonical_language(value).to_owned())
+                .context(t("Choose the target language"))?,
             hotkey: self.hotkey.clone(),
             quick_hotkey: self.quick_hotkey.clone(),
             correction_hotkey: self.correction_hotkey.clone(),
@@ -333,6 +391,7 @@ impl SettingsView {
             quick_correction_style: self.quick_style,
             launch_at_startup: self.launch_at_startup,
             theme: self.theme_preference,
+            ui_language: self.ui_language,
         };
         settings.validate()?;
         settings.validate_hotkeys()?;
@@ -345,10 +404,7 @@ impl SettingsView {
                 .update(cx, |app, _| app.save_settings(settings, &key))?
         });
         self.status = match result {
-            Ok(()) => {
-                "Paramètres enregistrés. Les raccourcis sont actifs ; tu peux fermer cette fenêtre."
-                    .into()
-            }
+            Ok(()) => t("Settings saved. Shortcuts are active; you can close this window.").into(),
             Err(error) => error.to_string(),
         };
         cx.notify();
@@ -388,7 +444,7 @@ impl SettingsView {
         };
         self.pending = Some(task.abort_handle());
         self.testing = true;
-        self.status = "Test de connexion en cours…".into();
+        self.status = t("Testing connection…").into();
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
             let _ = this.update_in(cx, |this, _, cx| {
@@ -398,9 +454,9 @@ impl SettingsView {
                 this.pending = None;
                 this.testing = false;
                 this.status = match result {
-                    Ok(Ok(text)) => format!("Connexion réussie : {text}"),
+                    Ok(Ok(text)) => format!("{}: {text}", t("Connection successful")),
                     Ok(Err(error)) => error.to_string(),
-                    Err(_) => "Test interrompu.".into(),
+                    Err(_) => t("Test interrupted.").into(),
                 };
                 cx.notify();
             });
@@ -431,7 +487,7 @@ impl SettingsView {
         {
             stroke.key.to_ascii_uppercase()
         } else {
-            self.status = "Utilise une lettre, un chiffre ou F1–F24 avec Ctrl, Alt ou Win.".into();
+            self.status = t("Use a letter, digit or F1–F24 with Ctrl, Alt or Win.").into();
             cx.notify();
             return;
         };
@@ -459,7 +515,7 @@ impl SettingsView {
                     TranslationMode::CorrectionQuick => self.quick_correction_hotkey = candidate,
                 }
                 self.recording = None;
-                self.status = "Raccourci capturé. Enregistre pour l’activer.".into();
+                self.status = t("Shortcut captured. Save to activate it.").into();
             }
             Err(error) => self.status = error.to_string(),
         }
@@ -490,7 +546,7 @@ impl Render for SettingsView {
                     .py_4()
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
-                    .child("PARAMÈTRES"),
+                    .child(t("SETTINGS")),
             );
         for category in Category::ALL {
             let selected = self.category == category;
@@ -505,7 +561,7 @@ impl Render for SettingsView {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.category = category;
                         if this.recording.take().is_some() {
-                            this.status = "Capture du raccourci annulée.".into();
+                            this.status = t("Shortcut capture cancelled.").into();
                         }
                         cx.notify();
                     })),
@@ -515,41 +571,54 @@ impl Render for SettingsView {
         match self.category {
             Category::General => {
                 fields = fields
-                    .child(section("Apparence", "Le thème s’applique à toutes les fenêtres de l’application.", cx))
-                    .child(field("Thème", Select::new(&self.theme).w_full()))
-                    .child(hint("Le choix est enregistré immédiatement. Système suit le thème de Windows.", cx))
-                    .child(section("Démarrage", "Retrouve l’application dans la zone de notification.", cx))
-                    .child(Checkbox::new("launch-at-startup").label("Lancer au démarrage de Windows").checked(self.launch_at_startup)
+                    .child(section("Appearance", "The theme applies to every application window.", cx))
+                    .child(field("Theme", Select::new(&self.theme).w_full()))
+                    .child(hint("Saved immediately. System follows the Windows theme.", cx))
+                    .child(field("Interface language", Select::new(&self.language).w_full()))
+                    .child(hint("Saved immediately. System uses French on French Windows, English otherwise.", cx))
+                    .child(section("Startup", "Find the application in the notification area.", cx))
+                    .child(Checkbox::new("launch-at-startup").label(t("Launch at Windows startup")).checked(self.launch_at_startup)
                         .on_click(cx.listener(|this, checked, _, cx| { this.launch_at_startup = *checked; cx.notify(); })))
-                    .child(hint("Enregistre pour appliquer cette option. L’application démarre dans le tray à l’ouverture de ta session.", cx))
-                    .child(hint("Fermer les fenêtres laisse l’application dans le tray. Pour arrêter : tray → Quitter.", cx));
+                    .child(hint("Save to apply this option. The application starts in the tray when you sign in.", cx))
+                    .child(hint("Closing windows leaves the application in the tray. To exit: tray → Quit.", cx));
             }
             Category::Provider => {
                 fields = fields
                     .child(field("Provider", Select::new(&self.provider).w_full()))
-                    .child(field("URL de base", Input::new(&self.base_url)))
-                    .child(hint("Avec /v1, sans /chat/completions.", cx))
-                    .child(field("Modèle", Input::new(&self.model)))
-                    .child(field("Clé API", Input::new(&self.api_key)))
-                    .child(hint("Enregistrée dans le gestionnaire d’identifiants Windows. Facultative pour un serveur local.", cx))
-                    .child(Button::new("test").label(if self.testing { "Test en cours…" } else { "Tester la connexion" }).disabled(self.testing)
-                        .on_click(cx.listener(|this, _, window, cx| this.test(window, cx))));
+                    .child(field("Base URL", Input::new(&self.base_url)))
+                    .child(hint("Include /v1, without /chat/completions.", cx))
+                    .child(field("Model", Input::new(&self.model)))
+                    .child(field("API key", Input::new(&self.api_key)))
+                    .child(hint(
+                        "Stored in Windows Credential Manager. Optional for a local server.",
+                        cx,
+                    ))
+                    .child(
+                        Button::new("test")
+                            .label(t(if self.testing {
+                                "Testing…"
+                            } else {
+                                "Test connection"
+                            }))
+                            .disabled(self.testing)
+                            .on_click(cx.listener(|this, _, window, cx| this.test(window, cx))),
+                    );
             }
             Category::Translation => {
                 fields = fields
-                    .child(section("Langues par défaut", "Ces langues restent modifiables dans l’aperçu.", cx))
-                    .child(field("Langue source", Select::new(&self.source).w_full()))
-                    .child(field("Langue cible", Select::new(&self.target).w_full()))
-                    .child(section("Avec aperçu", "Vérifie ou édite la traduction avant de remplacer le texte.", cx))
+                    .child(section("Default languages", "You can change these languages in the preview.", cx))
+                    .child(field("Source language", Select::new(&self.source).w_full()))
+                    .child(field("Target language", Select::new(&self.target).w_full()))
+                    .child(section("With preview", "Review or edit the translation before replacing the text.", cx))
                     .child(self.shortcut(TranslationMode::Preview, cx))
-                    .child(section("Quick Translate", "Traduit et remplace directement la sélection en arrière-plan, avec les langues et le provider enregistrés.", cx))
+                    .child(section("Quick Translate", "Translates and replaces the selection in the background using the saved languages and provider.", cx))
                     .child(self.shortcut(TranslationMode::Quick, cx));
             }
             Category::Correction => {
                 fields = fields
-                    .child(hint("La correction conserve la langue du texte. Le mode fidèle préserve le ton et les formulations ; les autres modes adaptent le style sans changer le sens.", cx))
-                    .child(section("Avec aperçu", "Vérifie ou édite la correction avant de remplacer le texte.", cx))
-                    .child(field("Mode par défaut", style_buttons("default-correction-modes", self.style)
+                    .child(hint("Proofreading keeps the text's language. Faithful mode preserves tone and wording; other modes adjust the style without changing the meaning.", cx))
+                    .child(section("With preview", "Review or edit the correction before replacing the text.", cx))
+                    .child(field("Default mode", style_buttons("default-correction-modes", self.style)
                         .on_click(cx.listener(|this, indices: &Vec<usize>, _, cx| {
                             if let Some(style) = indices.first().and_then(|index| CorrectionStyle::ALL.get(*index)).copied() {
                                 this.style = style;
@@ -557,8 +626,8 @@ impl Render for SettingsView {
                             }
                         }))))
                     .child(self.shortcut(TranslationMode::CorrectionPreview, cx))
-                    .child(section("Quick Check", "Corrige et remplace directement la sélection en arrière-plan.", cx))
-                    .child(field("Mode par défaut", style_buttons("quick-correction-modes", self.quick_style)
+                    .child(section("Quick Check", "Proofreads and replaces the selection directly in the background.", cx))
+                    .child(field("Default mode", style_buttons("quick-correction-modes", self.quick_style)
                         .on_click(cx.listener(|this, indices: &Vec<usize>, _, cx| {
                             if let Some(style) = indices.first().and_then(|index| CorrectionStyle::ALL.get(*index)).copied() {
                                 this.quick_style = style;
@@ -569,13 +638,13 @@ impl Render for SettingsView {
             }
             Category::Shortcuts => {
                 fields = fields
-                    .child(section("Traduction", "Avec aperçu ou remplacement direct avec Quick Translate.", cx))
-                    .child(field("Avec aperçu", self.shortcut(TranslationMode::Preview, cx)))
+                    .child(section("Translation", "Preview or direct replacement with Quick Translate.", cx))
+                    .child(field("With preview", self.shortcut(TranslationMode::Preview, cx)))
                     .child(field("Quick Translate", self.shortcut(TranslationMode::Quick, cx)))
-                    .child(section("Correction", "Avec aperçu ou remplacement direct avec Quick Check.", cx))
-                    .child(field("Avec aperçu", self.shortcut(TranslationMode::CorrectionPreview, cx)))
+                    .child(section("Proofreading", "Preview or direct replacement with Quick Check.", cx))
+                    .child(field("With preview", self.shortcut(TranslationMode::CorrectionPreview, cx)))
                     .child(field("Quick Check", self.shortcut(TranslationMode::CorrectionQuick, cx)))
-                    .child(hint("Les raccourcis sont partagés avec les rubriques Traduction et Correction. Ils doivent être distincts. Enregistre pour les activer.", cx));
+                    .child(hint("Shortcuts are shared with Translation and Proofreading. They must be distinct. Save to activate them.", cx));
             }
         }
         h_flex()
@@ -627,7 +696,7 @@ impl Render for SettingsView {
                                     .max_h(px(80.))
                                     .id("settings-status")
                                     .overflow_y_scroll()
-                                    .child(self.status.clone()),
+                                    .child(crate::i18n::localize_message(&self.status)),
                             )
                             .child(
                                 h_flex()
@@ -636,13 +705,13 @@ impl Render for SettingsView {
                                     .child(
                                         Button::new("close")
                                             .ghost()
-                                            .label("Fermer")
+                                            .label(t("Close"))
                                             .on_click(|_, window, _| window.remove_window()),
                                     )
                                     .child(
                                         Button::new("save")
                                             .primary()
-                                            .label("Enregistrer")
+                                            .label(t("Save"))
                                             .disabled(self.recording.is_some())
                                             .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
                                     ),
@@ -653,6 +722,44 @@ impl Render for SettingsView {
 }
 
 impl SettingsView {
+    fn localize(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        crate::ui::refresh_language(&self.source, true, window, cx);
+        crate::ui::refresh_language(&self.target, false, window, cx);
+        self.api_key.update(cx, |state, cx| {
+            state.set_placeholder(t("Optional for a local server"), window, cx)
+        });
+        for (select, values) in [
+            (
+                &self.theme,
+                ThemePreference::ALL
+                    .into_iter()
+                    .map(|v| v.label().to_owned())
+                    .collect::<Vec<_>>(),
+            ),
+            (
+                &self.language,
+                UiLanguage::ALL
+                    .into_iter()
+                    .map(|v| v.label().to_owned())
+                    .collect::<Vec<_>>(),
+            ),
+            (
+                &self.provider,
+                PROVIDERS
+                    .iter()
+                    .map(|v| t(v).to_owned())
+                    .collect::<Vec<_>>(),
+            ),
+        ] {
+            let index = select.read(cx).selected_index(cx);
+            select.update(cx, |state, cx| {
+                state.set_items(values, window, cx);
+                state.set_selected_index(index, window, cx);
+            });
+        }
+        window.set_window_title(t("Emendia — Settings"));
+    }
+
     fn shortcut(&self, mode: TranslationMode, cx: &mut Context<Self>) -> impl IntoElement {
         let (id, value) = match mode {
             TranslationMode::Preview => ("record", &self.hotkey),
@@ -676,16 +783,15 @@ impl SettingsView {
             )
             .child(
                 Button::new(id)
-                    .label(if self.recording == Some(mode) {
-                        "Appuie sur le raccourci…"
+                    .label(t(if self.recording == Some(mode) {
+                        "Press the shortcut…"
                     } else {
-                        "Changer le raccourci"
-                    })
+                        "Change shortcut"
+                    }))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.recording = Some(mode);
                         this.focus.focus(window, cx);
-                        this.status =
-                            "Appuie sur la combinaison souhaitée (Échap pour annuler).".into();
+                        this.status = t("Press the desired combination (Escape to cancel).").into();
                         cx.notify();
                     })),
             )
@@ -695,7 +801,7 @@ impl SettingsView {
 fn field(label: &'static str, control: impl IntoElement) -> impl IntoElement {
     v_flex()
         .gap_2()
-        .child(div().text_sm().child(label))
+        .child(div().text_sm().child(t(label)))
         .child(control)
 }
 
@@ -703,13 +809,13 @@ fn hint(text: &'static str, cx: &App) -> impl IntoElement {
     div()
         .text_sm()
         .text_color(cx.theme().muted_foreground)
-        .child(text)
+        .child(t(text))
 }
 
 fn section(title: &'static str, description: &'static str, cx: &App) -> impl IntoElement {
     v_flex()
         .gap_1()
         .pt_2()
-        .child(div().font_weight(FontWeight::SEMIBOLD).child(title))
+        .child(div().font_weight(FontWeight::SEMIBOLD).child(t(title)))
         .child(hint(description, cx))
 }

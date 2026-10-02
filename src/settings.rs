@@ -1,3 +1,4 @@
+use crate::i18n::{UiLanguage, canonical_language, t};
 use anyhow::{Context, Result, bail};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
@@ -7,20 +8,27 @@ use std::{
 };
 
 pub const LANGUAGES: &[&str] = &[
-    "Français",
-    "Anglais",
-    "Allemand",
-    "Espagnol",
-    "Italien",
-    "Portugais",
-    "Néerlandais",
-    "Japonais",
-    "Chinois",
-    "Coréen",
-    "Arabe",
-    "Ukrainien",
+    "French",
+    "English",
+    "German",
+    "Spanish",
+    "Italian",
+    "Portuguese",
+    "Dutch",
+    "Japanese",
+    "Chinese",
+    "Korean",
+    "Arabic",
+    "Ukrainian",
 ];
-pub const AUTO: &str = "Automatique";
+pub const AUTO: &str = "Automatic";
+
+fn deserialize_language<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<String, D::Error> {
+    let value = String::deserialize(deserializer)?;
+    Ok(canonical_language(&value).to_owned())
+}
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -36,9 +44,9 @@ impl ThemePreference {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Light => "Clair",
-            Self::Dark => "Sombre",
-            Self::System => "Système",
+            Self::Light => t("Light"),
+            Self::Dark => t("Dark"),
+            Self::System => t("System"),
         }
     }
 
@@ -67,12 +75,16 @@ impl CorrectionStyle {
     ];
 
     pub fn label(self) -> &'static str {
+        t(self.english_label())
+    }
+
+    pub fn english_label(self) -> &'static str {
         match self {
-            Self::Faithful => "Correction fidèle",
-            Self::Fluent => "Plus fluide",
-            Self::Professional => "Professionnel",
-            Self::Casual => "Décontracté",
-            Self::Concise => "Concis",
+            Self::Faithful => "Faithful correction",
+            Self::Fluent => "More fluent",
+            Self::Professional => "Professional",
+            Self::Casual => "Casual",
+            Self::Concise => "Concise",
         }
     }
 
@@ -111,15 +123,15 @@ pub enum Operation {
 impl Operation {
     pub fn title(self) -> &'static str {
         match self {
-            Self::Translation => "Traduction",
-            Self::Correction => "Correction",
+            Self::Translation => t("Translation"),
+            Self::Correction => t("Proofreading"),
         }
     }
 
     pub fn pending(self) -> &'static str {
         match self {
-            Self::Translation => "Traduction en cours…",
-            Self::Correction => "Correction en cours…",
+            Self::Translation => t("Translating…"),
+            Self::Correction => t("Proofreading…"),
         }
     }
 
@@ -136,7 +148,9 @@ impl Operation {
 pub struct Settings {
     pub base_url: String,
     pub model: String,
+    #[serde(deserialize_with = "deserialize_language")]
     pub source_language: String,
+    #[serde(deserialize_with = "deserialize_language")]
     pub target_language: String,
     pub hotkey: String,
     pub quick_hotkey: String,
@@ -146,6 +160,7 @@ pub struct Settings {
     pub quick_correction_style: CorrectionStyle,
     pub launch_at_startup: bool,
     pub theme: ThemePreference,
+    pub ui_language: UiLanguage,
 }
 
 impl Default for Settings {
@@ -154,7 +169,7 @@ impl Default for Settings {
             base_url: "https://api.openai.com/v1".into(),
             model: "gpt-4.1-mini".into(),
             source_language: AUTO.into(),
-            target_language: "Anglais".into(),
+            target_language: "English".into(),
             hotkey: "Ctrl+F12".into(),
             quick_hotkey: "Ctrl+Shift+F12".into(),
             correction_hotkey: "Ctrl+F11".into(),
@@ -163,31 +178,36 @@ impl Default for Settings {
             quick_correction_style: CorrectionStyle::Faithful,
             launch_at_startup: false,
             theme: ThemePreference::System,
+            ui_language: UiLanguage::System,
         }
     }
 }
 
 impl Settings {
     pub fn validate(&self) -> Result<()> {
-        let url = reqwest::Url::parse(&self.base_url).context("URL du provider invalide")?;
+        let url = reqwest::Url::parse(&self.base_url).context(t("Invalid provider URL"))?;
         if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
-            bail!("L’URL doit commencer par http:// ou https://.");
+            bail!(t("The URL must start with http:// or https://."));
         }
         if !url.username().is_empty()
             || url.password().is_some()
             || url.query().is_some()
             || url.fragment().is_some()
         {
-            bail!("L’URL ne doit contenir ni identifiants, ni paramètres, ni fragment.");
+            bail!(t(
+                "The URL must not contain credentials, query parameters or a fragment."
+            ));
         }
         if self.model.trim().is_empty() {
-            bail!("Renseigne le nom du modèle.");
+            bail!(t("Enter the model name."));
         }
         if self.source_language.trim().is_empty()
             || self.target_language.trim().is_empty()
             || self.target_language == AUTO
         {
-            bail!("Choisis une langue source et une langue cible explicite.");
+            bail!(t(
+                "Choose a source language and an explicit target language."
+            ));
         }
         Ok(())
     }
@@ -217,24 +237,45 @@ impl Settings {
 
 pub struct SettingsStore {
     path: PathBuf,
+    legacy_path: Option<PathBuf>,
 }
 
 impl SettingsStore {
     pub fn new() -> Result<Self> {
-        let dirs = ProjectDirs::from("dev", "TranslationTool", "TranslationTool")
-            .context("Impossible de trouver le dossier de configuration Windows")?;
+        let dirs = ProjectDirs::from("dev", "Emendia", "Emendia")
+            .context(t("Unable to find the Windows configuration directory"))?;
         Ok(Self {
             path: dirs.config_dir().join("settings.json"),
+            legacy_path: ProjectDirs::from("dev", "TranslationTool", "TranslationTool")
+                .map(|dirs| dirs.config_dir().join("settings.json")),
         })
     }
 
+    fn migrate_from(&self, legacy: &Path) -> Result<()> {
+        if !self.path.exists() && legacy.exists() {
+            let saved: Settings = serde_json::from_slice(&fs::read(legacy)?)?;
+            // Preserve the old interface language for existing users.
+            let saved = Settings {
+                ui_language: UiLanguage::French,
+                ..saved
+            };
+            self.write(&saved)?;
+        }
+        Ok(())
+    }
+
     pub fn load(&self) -> Result<Option<Settings>> {
+        // Report migration failures through the ordinary settings-repair UI.
+        if let Some(legacy) = &self.legacy_path {
+            self.migrate_from(legacy)
+                .context(t("Unable to import the previous configuration"))?;
+        }
         match fs::read(&self.path) {
             Ok(bytes) => Ok(Some(
-                serde_json::from_slice(&bytes).context("Configuration illisible")?,
+                serde_json::from_slice(&bytes).context(t("Unreadable configuration"))?,
             )),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(e).context("Impossible de lire la configuration"),
+            Err(e) => Err(e).context(t("Unable to read the configuration")),
         }
     }
 
@@ -252,16 +293,25 @@ impl SettingsStore {
         Ok(next)
     }
 
+    pub fn save_language(&self, saved: &Settings, language: UiLanguage) -> Result<Settings> {
+        let next = Settings {
+            ui_language: language,
+            ..saved.clone()
+        };
+        self.write(&next)?;
+        Ok(next)
+    }
+
     fn write(&self, settings: &Settings) -> Result<()> {
         fs::create_dir_all(
             self.path
                 .parent()
-                .context("Dossier de configuration absent")?,
+                .context(t("Missing configuration directory"))?,
         )?;
         // Keep a valid previous file if writing the new one fails.
         let temporary = self.path.with_extension("json.tmp");
         fs::write(&temporary, serde_json::to_vec_pretty(settings)?)?;
-        fs::rename(&temporary, &self.path).context("Impossible d’enregistrer la configuration")
+        fs::rename(&temporary, &self.path).context(t("Unable to save the configuration"))
     }
 
     pub fn path(&self) -> &Path {
@@ -271,8 +321,8 @@ impl SettingsStore {
 
 // Use a separate credential per endpoint, so switching providers cannot reuse an OpenAI key.
 fn credential(base_url: &str) -> Result<keyring::Entry> {
-    keyring::Entry::new("translation-tool", normalize_endpoint(base_url))
-        .context("Accès au gestionnaire d’identifiants impossible")
+    keyring::Entry::new("emendia", normalize_endpoint(base_url))
+        .context(t("Unable to access Windows Credential Manager"))
 }
 
 pub fn normalize_endpoint(base_url: &str) -> &str {
@@ -282,8 +332,19 @@ pub fn normalize_endpoint(base_url: &str) -> &str {
 pub fn load_api_key(base_url: &str) -> Result<String> {
     match credential(base_url)?.get_password() {
         Ok(key) => Ok(key),
-        Err(keyring::Error::NoEntry) => Ok(String::new()),
-        Err(e) => Err(e).context("Impossible de lire la clé API"),
+        Err(keyring::Error::NoEntry) => {
+            let legacy = keyring::Entry::new("translation-tool", normalize_endpoint(base_url))?;
+            match legacy.get_password() {
+                Ok(key) => {
+                    credential(base_url)?.set_password(&key)?;
+                    legacy.delete_credential()?;
+                    Ok(key)
+                }
+                Err(keyring::Error::NoEntry) => Ok(String::new()),
+                Err(error) => Err(error.into()),
+            }
+        }
+        Err(e) => Err(e).context(t("Unable to read the API key")),
     }
 }
 
@@ -297,7 +358,7 @@ pub fn save_api_key(base_url: &str, key: &str) -> Result<()> {
     } else {
         entry
             .set_password(key)
-            .context("Impossible d’enregistrer la clé API")
+            .context(t("Unable to save the API key"))
     }
 }
 
@@ -306,10 +367,74 @@ mod tests {
     use super::*;
 
     #[test]
+    fn migration_preserves_legacy_settings_and_never_overwrites_emendia_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let legacy = dir.path().join("legacy.json");
+        fs::write(&legacy, r#"{"source_language":"Automatique","target_language":"Allemand","hotkey":"Ctrl+Alt+KeyY","launch_at_startup":true,"theme":"dark"}"#).unwrap();
+        let store = SettingsStore {
+            path: dir.path().join("Emendia/settings.json"),
+            legacy_path: None,
+        };
+        store.migrate_from(&legacy).unwrap();
+        let migrated = store.load().unwrap().unwrap();
+        assert_eq!(migrated.source_language, AUTO);
+        assert_eq!(migrated.target_language, "German");
+        assert_eq!(migrated.hotkey, "Ctrl+Alt+KeyY");
+        assert!(migrated.launch_at_startup);
+        assert_eq!(migrated.theme, ThemePreference::Dark);
+        assert_eq!(migrated.ui_language, UiLanguage::French);
+        let changed = store.save_language(&migrated, UiLanguage::English).unwrap();
+        store.migrate_from(&legacy).unwrap();
+        assert_eq!(store.load().unwrap().unwrap(), changed);
+        assert!(legacy.exists());
+    }
+
+    #[test]
+    fn unreadable_legacy_configuration_can_be_repaired_by_saving_new_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let legacy = dir.path().join("legacy.json");
+        fs::write(&legacy, "invalid JSON").unwrap();
+        let store = SettingsStore {
+            path: dir.path().join("settings.json"),
+            legacy_path: Some(legacy),
+        };
+        assert!(store.load().is_err());
+        store.save(&Settings::default()).unwrap();
+        assert_eq!(store.load().unwrap().unwrap(), Settings::default());
+    }
+
+    #[test]
+    fn language_only_save_preserves_other_settings_even_when_invalid() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SettingsStore {
+            path: dir.path().join("settings.json"),
+            legacy_path: None,
+        };
+        let saved = Settings {
+            model: String::new(),
+            hotkey: "invalid".into(),
+            ..Settings::default()
+        };
+        assert_eq!(saved.ui_language, UiLanguage::System);
+        for language in UiLanguage::ALL {
+            let next = store.save_language(&saved, language).unwrap();
+            assert_eq!(
+                next,
+                Settings {
+                    ui_language: language,
+                    ..saved.clone()
+                }
+            );
+            assert_eq!(store.load().unwrap().unwrap(), next);
+        }
+    }
+
+    #[test]
     fn theme_only_save_preserves_settings_awaiting_repair() {
         let dir = tempfile::tempdir().unwrap();
         let store = SettingsStore {
             path: dir.path().join("settings.json"),
+            legacy_path: None,
         };
         let saved = Settings {
             model: String::new(),
@@ -334,11 +459,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = SettingsStore {
             path: dir.path().join("nested/settings.json"),
+            legacy_path: None,
         };
         assert!(store.load().unwrap().is_none());
         let mut settings = Settings::default();
         store.save(&settings).unwrap();
-        settings.source_language = "Français".into();
+        settings.source_language = "French".into();
         settings.launch_at_startup = true;
         settings.theme = ThemePreference::Dark;
         store.save(&settings).unwrap();
@@ -391,8 +517,8 @@ mod tests {
         assert!(!settings.launch_at_startup);
         assert_eq!(settings.theme, ThemePreference::System);
         assert_eq!(settings.hotkey, "Ctrl+Alt+KeyY");
-        assert_eq!(settings.source_language, "Allemand");
-        assert_eq!(settings.target_language, "Français");
+        assert_eq!(settings.source_language, "German");
+        assert_eq!(settings.target_language, "French");
         settings.validate_hotkeys().unwrap();
     }
 

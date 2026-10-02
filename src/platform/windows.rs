@@ -169,12 +169,12 @@ pub fn capture_target() -> Result<CaptureTarget> {
     unsafe {
         let window = GetForegroundWindow();
         if window.0.is_null() {
-            bail!("Aucune fenêtre active.");
+            bail!(crate::i18n::t("No active window."));
         }
         let mut process = 0;
         GetWindowThreadProcessId(window, Some(&mut process));
         if process == GetCurrentProcessId() {
-            bail!("Sélectionne du texte dans une autre application.");
+            bail!(crate::i18n::t("Select text in another application."));
         }
         let mut cursor = POINT::default();
         GetCursorPos(&mut cursor)?;
@@ -229,7 +229,7 @@ pub fn show_status_without_activation(window: isize, placement: Placement) -> Re
     unsafe {
         let handle = hwnd(window);
         if !IsWindow(handle).as_bool() {
-            bail!("Fenêtre d’état invalide.");
+            bail!(crate::i18n::t("Invalid status window."));
         }
         // GPUI handles WM_MOUSEACTIVATE with MA_ACTIVATE even for WS_EX_NOACTIVATE.
         // Intercept it before GPUI so clicking the status cannot activate the popup.
@@ -315,12 +315,14 @@ unsafe extern "system" fn status_subclass(
 pub fn capture(target: CaptureTarget) -> Result<Selection> {
     let _operation = CLIPBOARD_OPERATION
         .lock()
-        .map_err(|_| anyhow::anyhow!("Service presse-papiers interrompu"))?;
+        .map_err(|_| anyhow::anyhow!(crate::i18n::t("Clipboard service interrupted")))?;
     let _com = ComApartment::new()?;
     wait_for_modifiers()?;
     check_foreground(target.window, target.process)?;
     if destination(target.window)? != target.destination {
-        bail!("Le document ou le contrôle actif a changé ; capture annulée.");
+        bail!(crate::i18n::t(
+            "The document or active control changed; capture cancelled."
+        ));
     }
     let accessible = accessible_selection().ok();
     let anchor = accessible.as_ref().and_then(|a| a.rect);
@@ -331,13 +333,17 @@ pub fn capture(target: CaptureTarget) -> Result<Selection> {
         accessible.as_ref().map(|a| a.text.as_str()),
     )?;
     if destination(target.window)? != target.destination {
-        bail!("Le document ou le contrôle actif a changé ; capture annulée.");
+        bail!(crate::i18n::t(
+            "The document or active control changed; capture cancelled."
+        ));
     }
     if text.trim().is_empty() {
-        bail!("La sélection ne contient pas de texte.");
+        bail!(crate::i18n::t("The selection contains no text."));
     }
     if text.encode_utf16().count() > MAX_TEXT_UNITS {
-        bail!("Sélection trop longue (100 000 caractères UTF-16 maximum).");
+        bail!(crate::i18n::t(
+            "Selection too long (maximum 100,000 UTF-16 code units)."
+        ));
     }
     Ok(Selection {
         text,
@@ -360,9 +366,9 @@ pub fn replace_quick(selection: &Selection, text: &str) -> Result<()> {
 fn replace_inner(selection: &Selection, text: &str, quick: bool) -> Result<()> {
     let _operation = CLIPBOARD_OPERATION
         .lock()
-        .map_err(|_| anyhow::anyhow!("Service presse-papiers interrompu"))?;
+        .map_err(|_| anyhow::anyhow!(crate::i18n::t("Clipboard service interrupted")))?;
     if text.trim().is_empty() {
-        bail!("Le résultat est vide.");
+        bail!(crate::i18n::t("The result is empty."));
     }
     let _com = ComApartment::new()?;
     wait_for_modifiers()?;
@@ -373,7 +379,7 @@ fn replace_inner(selection: &Selection, text: &str, quick: bool) -> Result<()> {
     unsafe {
         let window = hwnd(selection.window);
         if !IsWindow(window).as_bool() {
-            bail!("La fenêtre d’origine a été fermée. Utilise Copier.");
+            bail!(crate::i18n::t("The original window was closed. Use Copy."));
         }
         // SetForegroundWindow is subject to Windows focus rules; never paste if it failed.
         if !quick {
@@ -383,18 +389,24 @@ fn replace_inner(selection: &Selection, text: &str, quick: bool) -> Result<()> {
     let deadline = Instant::now() + Duration::from_millis(600);
     while check_foreground(selection.window, selection.process).is_err() {
         if Instant::now() >= deadline {
-            bail!("Impossible de retrouver le focus de la fenêtre d’origine. Utilise Copier.");
+            bail!(crate::i18n::t(
+                "Unable to focus the original window. Use Copy."
+            ));
         }
         thread::sleep(Duration::from_millis(15));
     }
     if destination(selection.window)? != selection.destination {
-        bail!("Le document ou le contrôle d’origine a changé. Utilise Copier.");
+        bail!(crate::i18n::t(
+            "The original document or control changed. Use Copy."
+        ));
     }
     let accessible = accessible_selection().ok();
     if let Some(identity) = &selection.accessibility
         && accessible.as_ref().is_none_or(|a| &a.identity != identity)
     {
-        bail!("La position de la sélection d’origine a changé. Utilise Copier.");
+        bail!(crate::i18n::t(
+            "The original selection position changed. Use Copy."
+        ));
     }
     let current = copy_selection(
         selection.window,
@@ -402,13 +414,17 @@ fn replace_inner(selection: &Selection, text: &str, quick: bool) -> Result<()> {
         accessible.as_ref().map(|a| a.text.as_str()),
     )?;
     if !selection_text_matches(&current, &selection.text) {
-        bail!("La sélection a changé. Aucun remplacement effectué ; utilise Copier.");
+        bail!(crate::i18n::t(
+            "The selection changed. No replacement performed; use Copy."
+        ));
     }
     check_destination(selection)?;
     let sequence = write_text(text)?;
     check_destination(selection)?;
     if unsafe { GetClipboardSequenceNumber() } != sequence {
-        bail!("Le presse-papiers a changé avant le collage. Utilise Copier.");
+        bail!(crate::i18n::t(
+            "The clipboard changed before pasting. Use Copy."
+        ));
     }
     send_ctrl(b'V')?;
     // Keep the translation in the clipboard: a fixed-delay restoration can cause
@@ -419,7 +435,7 @@ fn replace_inner(selection: &Selection, text: &str, quick: bool) -> Result<()> {
 pub fn copy_text(text: &str) -> Result<()> {
     let _operation = CLIPBOARD_OPERATION
         .lock()
-        .map_err(|_| anyhow::anyhow!("Service presse-papiers interrompu"))?;
+        .map_err(|_| anyhow::anyhow!(crate::i18n::t("Clipboard service interrupted")))?;
     write_text(text).map(|_| ())
 }
 
@@ -433,7 +449,9 @@ fn check_foreground(window: isize, expected_process: u32) -> Result<()> {
         let mut process = 0;
         GetWindowThreadProcessId(foreground, Some(&mut process));
         if foreground != hwnd(window) || process != expected_process {
-            bail!("La fenêtre active a changé ; opération annulée.");
+            bail!(crate::i18n::t(
+                "The active window changed; operation cancelled."
+            ));
         }
     }
     Ok(())
@@ -442,11 +460,14 @@ fn check_foreground(window: isize, expected_process: u32) -> Result<()> {
 fn check_destination(selection: &Selection) -> Result<()> {
     check_foreground(selection.window, selection.process)?;
     if destination(selection.window)? != selection.destination {
-        bail!("Le document ou le contrôle actif a changé avant le collage. Utilise Copier.");
+        bail!(crate::i18n::t(
+            "The document or active control changed before pasting. Use Copy."
+        ));
     }
     if let Some(identity) = &selection.accessibility {
-        let current =
-            accessible_selection().context("La sélection accessible a disparu ; utilise Copier")?;
+        let current = accessible_selection().context(crate::i18n::t(
+            "The accessible selection disappeared; use Copy",
+        ))?;
         validate_accessible_selection(identity, &selection.text, &current)?;
     }
     check_foreground(selection.window, selection.process)
@@ -458,7 +479,9 @@ fn validate_accessible_selection(
     current: &AccessibleSelection,
 ) -> Result<()> {
     if &current.identity != identity || !selection_text_matches(&current.text, text) {
-        bail!("La position ou le contenu de la sélection a changé. Utilise Copier.");
+        bail!(crate::i18n::t(
+            "The selection position or content changed. Use Copy."
+        ));
     }
     Ok(())
 }
@@ -478,7 +501,7 @@ fn wait_for_modifiers() -> Result<()> {
         .any(|key| unsafe { GetAsyncKeyState(key.0 as i32) } < 0)
     {
         if Instant::now() >= deadline {
-            bail!("Relâche les touches du raccourci, puis réessaie.");
+            bail!(crate::i18n::t("Release the shortcut keys, then try again."));
         }
         thread::sleep(Duration::from_millis(10));
     }
@@ -512,9 +535,9 @@ fn send_ctrl(key: u8) -> Result<()> {
         unsafe {
             SendInput(&releases, size_of::<INPUT>() as i32);
         }
-        bail!(
-            "Windows a bloqué la simulation clavier (application administrateur ou saisie protégée)."
-        );
+        bail!(crate::i18n::t(
+            "Windows blocked keyboard simulation (elevated application or protected input)."
+        ));
     }
     Ok(())
 }
@@ -542,9 +565,9 @@ fn copy_selection(window: isize, process: u32, accessible_text: Option<&str>) ->
             }
         }
         if Instant::now() >= deadline {
-            break Err(anyhow::anyhow!(
-                "Aucun texte copié. Vérifie la sélection et le support de Ctrl+C."
-            ));
+            break Err(anyhow::anyhow!(crate::i18n::t(
+                "No text copied. Check the selection and Ctrl+C support."
+            )));
         }
         thread::sleep(Duration::from_millis(15));
     };
@@ -578,7 +601,7 @@ fn clipboard_window() -> Result<HWND> {
                     CreateWindowExW(
                         WINDOW_EX_STYLE::default(),
                         w!("STATIC"),
-                        w!("TranslationTool clipboard"),
+                        w!("Emendia clipboard"),
                         WINDOW_STYLE::default(),
                         0,
                         0,
@@ -617,7 +640,7 @@ fn clipboard_window() -> Result<HWND> {
     });
     match owner {
         Ok(window) => Ok(hwnd(*window)),
-        Err(error) => bail!("Fenêtre presse-papiers : {error}"),
+        Err(error) => bail!("Clipboard window: {error}"),
     }
 }
 
@@ -630,7 +653,9 @@ impl ClipboardLock {
                 return Ok(Self);
             }
             if Instant::now() >= deadline {
-                bail!("Le presse-papiers est occupé par une autre application.");
+                bail!(crate::i18n::t(
+                    "The clipboard is busy in another application."
+                ));
             }
             thread::sleep(Duration::from_millis(10));
         }
@@ -696,16 +721,18 @@ impl ClipboardSnapshot {
                     break;
                 }
                 if matches!(format, 0x80..=0x8e | 0x200..=0x3ff) {
-                    bail!(
-                        "Le presse-papiers contient un format privé non restaurable. Copie d’abord du texte, puis réessaie."
-                    );
+                    bail!(crate::i18n::t(
+                        "The clipboard contains a private format that cannot be restored. Copy text first, then try again."
+                    ));
                 }
                 let original = GetClipboardData(format)
-                    .context("Impossible de préserver le presse-papiers")?;
+                    .context(crate::i18n::t("Unable to preserve the clipboard"))?;
                 let duplicate =
                     OleDuplicateData(original, CLIPBOARD_FORMAT(format as u16), GMEM_MOVEABLE);
                 if duplicate.0.is_null() {
-                    bail!("Impossible de préserver un format du presse-papiers ; capture annulée.");
+                    bail!(crate::i18n::t(
+                        "Unable to preserve a clipboard format; capture cancelled."
+                    ));
                 }
                 formats.push(ClipboardFormat {
                     format,
@@ -752,26 +779,28 @@ fn read_capture(expected_process: u32) -> Result<(Result<String>, u32)> {
         let mut process = 0;
         GetWindowThreadProcessId(owner, Some(&mut process));
         if process != expected_process {
-            bail!("Le presse-papiers a été modifié par une autre application.");
+            bail!(crate::i18n::t(
+                "The clipboard was modified by another application."
+            ));
         }
         let result = (|| -> Result<String> {
             let handle = GetClipboardData(UNICODE_TEXT)
-                .context("La sélection copiée n’est pas du texte Unicode")?;
+                .context(crate::i18n::t("The copied selection is not Unicode text"))?;
             let global = HGLOBAL(handle.0);
             let length = GlobalSize(global) / 2;
             let pointer = GlobalLock(global).cast::<u16>();
             if pointer.is_null() {
-                bail!("Impossible de lire le presse-papiers.");
+                bail!(crate::i18n::t("Unable to read the clipboard."));
             }
             let units = std::slice::from_raw_parts(pointer, length);
             let end = units.iter().position(|c| *c == 0).unwrap_or(units.len());
             let result = if end > MAX_TEXT_UNITS {
-                Err(anyhow::anyhow!(
-                    "Sélection trop longue (100 000 caractères UTF-16 maximum)."
-                ))
+                Err(anyhow::anyhow!(crate::i18n::t(
+                    "Selection too long (maximum 100,000 UTF-16 code units)."
+                )))
             } else {
                 String::from_utf16(&units[..end])
-                    .context("Le texte copié n’est pas un Unicode valide")
+                    .context(crate::i18n::t("The copied text is not valid Unicode"))
             };
             let _ = GlobalUnlock(global);
             result
@@ -782,7 +811,9 @@ fn read_capture(expected_process: u32) -> Result<(Result<String>, u32)> {
 
 fn write_text(text: &str) -> Result<u32> {
     if text.contains('\0') || text.encode_utf16().count() > MAX_TEXT_UNITS {
-        bail!("Le texte à copier contient un caractère nul ou dépasse 100 000 caractères UTF-16.");
+        bail!(crate::i18n::t(
+            "The text contains a null character or exceeds 100,000 UTF-16 code units."
+        ));
     }
     let bytes: Vec<u8> = text
         .encode_utf16()
@@ -799,7 +830,7 @@ fn write_text(text: &str) -> Result<u32> {
     drop(lock);
     let (committed, sequence) = read_text(unsafe { GetCurrentProcessId() })?;
     if committed != text {
-        bail!("Le presse-papiers a changé pendant l’écriture.");
+        bail!(crate::i18n::t("The clipboard changed while writing."));
     }
     Ok(sequence)
 }
@@ -810,7 +841,7 @@ fn set_format(format: u32, bytes: &[u8]) -> Result<()> {
         let pointer = GlobalLock(memory);
         if pointer.is_null() {
             let _ = windows::Win32::Foundation::GlobalFree(memory);
-            bail!("Allocation presse-papiers impossible.");
+            bail!(crate::i18n::t("Unable to allocate clipboard memory."));
         }
         std::ptr::copy_nonoverlapping(bytes.as_ptr(), pointer.cast::<u8>(), bytes.len());
         let _ = GlobalUnlock(memory);
@@ -872,21 +903,21 @@ fn accessible_selection() -> Result<AccessibleSelection> {
         let pattern: IUIAutomationTextPattern = element.GetCurrentPatternAs(UIA_TextPatternId)?;
         let selection = pattern.GetSelection()?;
         if selection.Length()? != 1 {
-            bail!("Sélection absente ou multiple.");
+            bail!("Missing or multiple selections.");
         }
         let range = selection.GetElement(0)?;
         let text = range.GetText(MAX_TEXT_UNITS as i32 + 1)?.to_string();
         if text.is_empty() {
-            bail!("Aucune sélection accessible.");
+            bail!("No accessible selection.");
         }
         let ids = SafeArray(element.GetRuntimeId()?);
         if ids.0.is_null() {
-            bail!("Identifiant accessible absent.");
+            bail!("Missing accessibility identifier.");
         }
         let lower = SafeArrayGetLBound(ids.0, 1)?;
         let upper = SafeArrayGetUBound(ids.0, 1)?;
         if !(1..=64).contains(&(upper - lower + 1)) {
-            bail!("Identifiant accessible invalide.");
+            bail!("Invalid accessibility identifier.");
         }
         let mut runtime_id = Vec::new();
         for index in lower..=upper {
@@ -904,7 +935,7 @@ fn accessible_selection() -> Result<AccessibleSelection> {
             let text = prefix.GetText(1_000_001)?;
             let length = text.len();
             if length > 1_000_000 {
-                bail!("Document trop long pour identifier la position.");
+                bail!("Document too long to identify the position.");
             }
             Ok(length)
         })()
@@ -912,12 +943,12 @@ fn accessible_selection() -> Result<AccessibleSelection> {
         let rect = (|| -> Result<Rect> {
             let rects = SafeArray(range.GetBoundingRectangles()?);
             if rects.0.is_null() {
-                bail!("Rectangle absent.");
+                bail!("Missing rectangle.");
             }
             let lower = SafeArrayGetLBound(rects.0, 1)?;
             let upper = SafeArrayGetUBound(rects.0, 1)?;
             if upper - lower + 1 < 4 {
-                bail!("Coordonnées de sélection indisponibles.");
+                bail!("Selection coordinates unavailable.");
             }
             let mut values = [0_f64; 4];
             for (offset, value) in values.iter_mut().enumerate() {
@@ -925,7 +956,7 @@ fn accessible_selection() -> Result<AccessibleSelection> {
                 SafeArrayGetElement(rects.0, &index, (value as *mut f64).cast())?;
             }
             if values.iter().any(|v| !v.is_finite()) || values[2] <= 0. || values[3] <= 0. {
-                bail!("Rectangle invalide.");
+                bail!("Invalid rectangle.");
             }
             Ok(Rect {
                 left: values[0] as f32,

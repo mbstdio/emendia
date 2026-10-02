@@ -2,6 +2,7 @@ pub mod preview;
 pub mod settings;
 pub mod status;
 pub mod theme;
+use crate::i18n::{canonical_language, t};
 
 use gpui_kit::{
     component::{
@@ -23,11 +24,11 @@ pub fn style_buttons(id: &'static str, value: crate::settings::CorrectionStyle) 
             .map(|(index, style)| {
                 Button::new((id, index))
                     .child(div().text_xs().child(match style {
-                        crate::settings::CorrectionStyle::Faithful => "Fidèle",
-                        crate::settings::CorrectionStyle::Fluent => "Fluide",
+                        crate::settings::CorrectionStyle::Faithful => t("Faithful"),
+                        crate::settings::CorrectionStyle::Fluent => t("Fluent"),
                         crate::settings::CorrectionStyle::Professional => "Pro",
-                        crate::settings::CorrectionStyle::Casual => "Décontracté",
-                        crate::settings::CorrectionStyle::Concise => "Concis",
+                        crate::settings::CorrectionStyle::Casual => t("Casual"),
+                        crate::settings::CorrectionStyle::Concise => t("Concise"),
                     }))
                     .accessibility_label(style.label())
                     .h(px(28.))
@@ -45,18 +46,45 @@ pub fn language_select(
     window: &mut Window,
     cx: &mut App,
 ) -> LanguageSelect {
+    let (values, index) = language_items(value, automatic);
+    cx.new(|cx| SelectState::new(values, index, window, cx).searchable(true))
+}
+
+fn language_items(value: &str, automatic: bool) -> (Vec<String>, Option<IndexPath>) {
+    let value = canonical_language(value);
     let mut values: Vec<String> = crate::settings::LANGUAGES
         .iter()
-        .map(|v| (*v).to_owned())
+        .map(|v| t(v).to_owned())
         .collect();
     if automatic {
-        values.insert(0, crate::settings::AUTO.into());
+        values.insert(0, t(crate::settings::AUTO).into());
     }
-    if !values.iter().any(|v| v == value) {
+    if !values.iter().any(|v| canonical_language(v) == value) {
         values.push(value.into());
     }
-    let index = values.iter().position(|v| v == value).map(IndexPath::new);
-    cx.new(|cx| SelectState::new(values, index, window, cx).searchable(true))
+    let index = values
+        .iter()
+        .position(|v| canonical_language(v) == value)
+        .map(IndexPath::new);
+    (values, index)
+}
+
+pub fn refresh_language(
+    select: &LanguageSelect,
+    automatic: bool,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let value = select
+        .read(cx)
+        .selected_value()
+        .map(|v| canonical_language(v).to_owned())
+        .unwrap_or_default();
+    let (values, index) = language_items(&value, automatic);
+    select.update(cx, |state, cx| {
+        state.set_items(values, window, cx);
+        state.set_selected_index(index, window, cx);
+    });
 }
 
 pub fn text_input(value: &str, window: &mut Window, cx: &mut App) -> Entity<InputState> {

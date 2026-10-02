@@ -7,12 +7,14 @@ use global_hotkey::{
 pub fn parse(value: &str) -> Result<HotKey> {
     let hotkey: HotKey = value
         .parse()
-        .context("Raccourci invalide (exemple : Ctrl+Alt+KeyT)")?;
+        .context(crate::i18n::t("Invalid shortcut (example: Ctrl+Alt+KeyT)"))?;
     if !hotkey
         .mods
         .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER)
     {
-        bail!("Le raccourci doit inclure Ctrl, Alt ou Win.");
+        bail!(crate::i18n::t(
+            "The shortcut must include Ctrl, Alt or Win."
+        ));
     }
     Ok(hotkey)
 }
@@ -20,7 +22,9 @@ pub fn parse(value: &str) -> Result<HotKey> {
 pub fn parse_pair(preview: &str, quick: &str) -> Result<[HotKey; 2]> {
     let keys = [parse(preview)?, parse(quick)?];
     if keys[0] == keys[1] {
-        bail!("Les raccourcis de l’aperçu et du Quick Translate doivent être différents.");
+        bail!(crate::i18n::t(
+            "Preview and Quick Translate shortcuts must be different."
+        ));
     }
     Ok(keys)
 }
@@ -34,7 +38,7 @@ pub fn parse_shortcuts(values: [&str; 4]) -> Result<[HotKey; 4]> {
     ];
     for (index, key) in keys.iter().enumerate() {
         if keys[..index].contains(key) {
-            bail!("Les quatre raccourcis doivent être différents.");
+            bail!(crate::i18n::t("All four shortcuts must be different."));
         }
     }
     Ok(keys)
@@ -93,9 +97,9 @@ impl HotkeyRegistration {
             &mut self.registered,
             &next,
             |key| {
-                self.manager
-                    .register(key)
-                    .context("Raccourci déjà utilisé par une autre application")
+                self.manager.register(key).context(crate::i18n::t(
+                    "Shortcut already used by another application",
+                ))
             },
             |key| self.manager.unregister(key).map_err(Into::into),
             persist,
@@ -165,7 +169,8 @@ fn update_registration(
         }
         if !cleanup_errors.is_empty() {
             return Err(error.context(format!(
-                "Nettoyage des nouveaux raccourcis incomplet : {}",
+                "{}: {}",
+                crate::i18n::t("Incomplete cleanup of new shortcuts"),
                 cleanup_errors.join(" ; ")
             )));
         }
@@ -177,7 +182,7 @@ fn update_registration(
             Err(error) => {
                 // New bindings and settings are already committed. Keep their mapping
                 // valid instead of trying to re-reserve old keys another process may take.
-                tracing::warn!(%error, "Ancien raccourci conservé pour une prochaine tentative de nettoyage");
+                tracing::warn!(%error, "Old shortcut retained for a later cleanup attempt");
             }
         }
     }

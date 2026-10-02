@@ -75,8 +75,7 @@ fn clipboard_and_native_edit_round_trip() -> Result<()> {
     let _child = ChildProcess(child);
     let deadline = Instant::now() + Duration::from_secs(5);
     let fixture = loop {
-        if let Ok(window) = unsafe { FindWindowW(None, w!("TranslationTool native test fixture")) }
-        {
+        if let Ok(window) = unsafe { FindWindowW(None, w!("Emendia native test fixture")) } {
             break window;
         }
         if Instant::now() >= deadline {
@@ -325,7 +324,7 @@ fn edit_fixture() -> Result<()> {
         let fixture = CreateWindowExW(
             WS_EX_APPWINDOW,
             w!("STATIC"),
-            w!("TranslationTool native test fixture"),
+            w!("Emendia native test fixture"),
             WS_OVERLAPPEDWINDOW | WS_VISIBLE,
             100,
             100,

@@ -1,3 +1,4 @@
+use crate::i18n::{UiLanguage, t};
 use crate::{
     platform::{
         hotkey::{HotkeyRegistration, TranslationMode},
@@ -45,7 +46,7 @@ impl Controller {
         assert_eq!(
             windows::foreground_window(),
             foreground,
-            "La fenêtre d’état ne doit pas prendre le focus"
+            "The status window must not take focus"
         );
         cx.spawn(async move |this, cx| {
             cx.background_executor()
@@ -55,7 +56,7 @@ impl Controller {
                 assert_eq!(
                     windows::foreground_window(),
                     foreground,
-                    "L’affichage différé doit conserver le focus"
+                    "Deferred display must preserve focus"
                 );
                 let (window, view) = this.status_window.as_ref().unwrap();
                 let placement = view.upgrade().unwrap().read(cx).smoke_placement();
@@ -91,7 +92,7 @@ impl Controller {
                     this.open_preview_result(selection, this.settings.clone(), operation, None, cx);
                 }
             })
-            .expect("Contrôleur de diagnostic");
+            .expect("Smoke test controller");
         })
         .detach();
         Ok(())
@@ -115,7 +116,7 @@ impl Controller {
                     view.smoke_layout();
                     view.terminal
                         && view.error
-                        && view.message.starts_with("Remplacement impossible")
+                        && view.message.starts_with(t("Replacement unavailable"))
                 })
             && self
                 .preview_window
@@ -158,6 +159,11 @@ impl Controller {
         cx: &mut Context<Self>,
     ) {
         crate::ui::theme::apply(self.settings.theme, cx);
+        gpui_kit::component::set_locale(if t("Settings") == "Settings" {
+            "en"
+        } else {
+            "fr"
+        });
         let error = self
             .hotkey
             .change(self.settings.shortcuts())
@@ -242,7 +248,7 @@ impl Controller {
                 let status = windows::status_placement_for_window(windows::foreground_window())
                     .and_then(|placement| self.open_status(placement, mode.operation(), cx));
                 if status.is_ok() {
-                    self.set_status(format!("Capture : {error}"), true, true, cx);
+                    self.set_status(format!("{}: {error}", t("Capture")), true, true, cx);
                 } else {
                     self.open_settings(Some(error.to_string()), cx);
                 }
@@ -256,7 +262,7 @@ impl Controller {
         let status = windows::status_placement(&target)
             .and_then(|placement| self.open_status(placement, mode.operation(), cx));
         if let Err(error) = status {
-            self.open_settings(Some(format!("Fenêtre d’état : {error}")), cx);
+            self.open_settings(Some(format!("{}: {error}", t("Status window"))), cx);
             return;
         }
         let quick_key = if mode.quick() {
@@ -282,7 +288,7 @@ impl Controller {
         cx.spawn(async move |this, cx| {
             let result = capture
                 .await
-                .context("Le service de capture a échoué")
+                .context(t("The capture service failed"))
                 .and_then(|r| r);
             let _ = this.update(cx, |this, cx| {
                 this.session_active = false;
@@ -306,7 +312,9 @@ impl Controller {
                             );
                         }
                     },
-                    Err(error) => this.set_status(format!("Capture : {error}"), true, true, cx),
+                    Err(error) => {
+                        this.set_status(format!("{}: {error}", t("Capture")), true, true, cx)
+                    }
                 }
             });
         })
@@ -358,7 +366,7 @@ impl Controller {
                     }
                     result => {
                         let _ = window.update(cx, |_, window, _| window.remove_window());
-                        result.context("Impossible d’afficher la fenêtre d’état")?
+                        result.context(t("Unable to show the status window"))?
                     }
                 }
             }
@@ -411,21 +419,21 @@ impl Controller {
         cx.spawn(async move |this, cx| {
             let result = task
                 .await
-                .context("Le service de traitement rapide a échoué")
+                .context(t("The quick processing service failed"))
                 .and_then(|r| r);
             let result = match result {
                 Ok(text) => {
                     let captured = selection.clone();
                     let translated = text.clone();
                     let replacement = this.update(cx, |this, cx| {
-                        this.set_status("Remplacement dans le document…".into(), false, false, cx);
+                        this.set_status(t("Replacing in the document…").into(), false, false, cx);
                         this.runtime
                             .spawn_blocking(move || windows::replace_quick(&captured, &translated))
                     });
                     let replacement = match replacement {
                         Ok(task) => task
                             .await
-                            .context("Le service de remplacement a échoué")
+                            .context(t("The replacement service failed"))
                             .and_then(|r| r),
                         Err(error) => Err(error),
                     };
@@ -437,11 +445,11 @@ impl Controller {
                 this.session_active = false;
                 match result {
                     Ok((_, Ok(()))) => {
-                        this.set_status("Terminé — remplacement effectué.".into(), true, false, cx)
+                        this.set_status(t("Done — text replaced.").into(), true, false, cx)
                     }
                     Ok((text, Err(error))) => {
                         this.set_status(
-                            format!("Remplacement impossible : {error}"),
+                            format!("{}: {error}", t("Replacement unavailable")),
                             true,
                             true,
                             cx,
@@ -527,7 +535,9 @@ impl Controller {
                     });
                 });
             }
-            Err(error) => self.open_settings(Some(format!("Ouverture de l’aperçu : {error}")), cx),
+            Err(error) => {
+                self.open_settings(Some(format!("{}: {error}", t("Opening preview"))), cx)
+            }
         }
     }
 
@@ -552,7 +562,7 @@ impl Controller {
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::centered(size(px(860.), px(680.)), cx)),
             titlebar: Some(TitlebarOptions {
-                title: Some("Translation Tool — Paramètres".into()),
+                title: Some(t("Emendia — Settings").into()),
                 ..Default::default()
             }),
             window_min_size: Some(size(px(720.), px(500.))),
@@ -563,7 +573,7 @@ impl Controller {
             cx.new(|cx| SettingsView::new(settings, controller, error, window, cx))
         }) {
             Ok((window, view)) => self.settings_window = Some((window, view.downgrade())),
-            Err(error) => tracing::error!(%error, "Impossible d’ouvrir les paramètres"),
+            Err(error) => tracing::error!(%error, "Unable to open settings"),
         }
     }
 
@@ -589,6 +599,32 @@ impl Controller {
     pub fn set_theme(&mut self, theme: ThemePreference, cx: &mut Context<Self>) -> Result<()> {
         self.settings = self.store.save_theme(&self.settings, theme)?;
         crate::ui::theme::apply(theme, cx);
+        Ok(())
+    }
+
+    pub fn set_language(&mut self, language: UiLanguage, cx: &mut Context<Self>) -> Result<()> {
+        self.settings = self.store.save_language(&self.settings, language)?;
+        crate::i18n::apply(language);
+        gpui_kit::component::set_locale(if t("Settings") == "Settings" {
+            "en"
+        } else {
+            "fr"
+        });
+        self.tray.localize();
+        let preview = self.preview_window.clone();
+        let status = self.status_window.clone();
+        // The caller holds the SettingsView lease until this update returns.
+        cx.defer(move |cx| {
+            if let Some((handle, view)) = preview {
+                let _ = handle.update(cx, |_, window, cx| {
+                    let _ = view.update(cx, |view, cx| view.localize(window, cx));
+                });
+            }
+            if let Some((_, view)) = status {
+                let _ = view.update(cx, |_, cx| cx.notify());
+            }
+        });
+        cx.refresh_windows();
         Ok(())
     }
 }

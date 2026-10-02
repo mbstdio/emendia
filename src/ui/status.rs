@@ -1,3 +1,4 @@
+use crate::i18n::t;
 use crate::{app::Controller, platform::windows, settings::Operation};
 use anyhow::{Result, bail};
 use gpui_kit::component::spinner::Spinner;
@@ -35,7 +36,7 @@ impl StatusView {
         placement: windows::Placement,
     ) -> Self {
         Self {
-            message: "Capture du texte… Relâche les touches du raccourci.".into(),
+            message: t("Capturing text… Release the shortcut keys.").into(),
             terminal: false,
             error: false,
             operation,
@@ -58,9 +59,9 @@ impl StatusView {
         cx: &App,
     ) -> Result<()> {
         let handle = HasWindowHandle::window_handle(window)
-            .map_err(|error| anyhow::anyhow!("Fenêtre d’état inaccessible : {error}"))?;
+            .map_err(|error| anyhow::anyhow!("Unable to access the status window: {error}"))?;
         let RawWindowHandle::Win32(handle) = handle.as_raw() else {
-            bail!("Fenêtre Windows attendue")
+            bail!("Expected a Windows window")
         };
         let hwnd = handle.hwnd.get();
         // Native resizing emits synchronous WM_SIZE callbacks into GPUI. Execute
@@ -68,7 +69,7 @@ impl StatusView {
         cx.foreground_executor()
             .spawn(async move {
                 if let Err(error) = windows::show_status_without_activation(hwnd, placement.get()) {
-                    tracing::error!(%error, "Affichage de la fenêtre d’état impossible");
+                    tracing::error!(%error, "Unable to show the status window");
                 }
             })
             .detach();
@@ -87,26 +88,24 @@ impl StatusView {
 
     pub(crate) fn smoke_layout(&self) {
         let bounds = self.layout.borrow();
-        let message = bounds.get(1).expect("Le message d’état doit être mesuré");
-        let footer = bounds
-            .get(2)
-            .expect("Les boutons d’erreur doivent être visibles");
+        let message = bounds.get(1).expect("The status message must be measured");
+        let footer = bounds.get(2).expect("Error buttons must be visible");
         let size = self.viewport.get();
         assert!(
             message.size.width <= size.width - px(24.),
-            "Le message doit rester dans la largeur de la popup : {message:?}, fenêtre : {size:?}"
+            "The message must fit the popup width: {message:?}, window: {size:?}"
         );
         assert!(
             message.size.height > px(20.),
-            "L’erreur longue doit revenir à la ligne : {message:?}"
+            "The long error must wrap: {message:?}"
         );
         assert!(
             footer.bottom() <= size.height,
-            "Les boutons doivent rester visibles : {footer:?}, fenêtre : {size:?}"
+            "The buttons must remain visible: {footer:?}, window: {size:?}"
         );
         assert!(
             size.height < px(160.),
-            "La popup doit s’adapter à son contenu : {size:?}"
+            "The popup must fit its content: {size:?}"
         );
     }
 
@@ -175,7 +174,7 @@ impl Render for StatusView {
                     .overflow_y_scroll()
                     .text_sm()
                     .whitespace_normal()
-                    .child(self.message.clone()),
+                    .child(crate::i18n::localize_message(&self.message)),
             )
             .when(self.error, |view| {
                 view.child(
@@ -186,7 +185,7 @@ impl Render for StatusView {
                             Button::new("status-settings")
                                 .ghost()
                                 .small()
-                                .label("Paramètres")
+                                .label(t("Settings"))
                                 .disabled(!self.error)
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     let _ = this.controller.update(cx, |app, cx| {
@@ -199,7 +198,7 @@ impl Render for StatusView {
                             Button::new("status-close")
                                 .ghost()
                                 .small()
-                                .label("Fermer")
+                                .label(t("Close"))
                                 .disabled(!self.terminal)
                                 .on_click(|_, window, _| window.remove_window()),
                         ),

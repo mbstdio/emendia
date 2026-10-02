@@ -1,3 +1,4 @@
+use crate::i18n::{canonical_language, t};
 use crate::{
     app::Controller,
     platform::windows::{self, Selection},
@@ -41,6 +42,16 @@ pub struct Preview {
 }
 
 impl Preview {
+    pub fn localize(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        crate::ui::refresh_language(&self.source, true, window, cx);
+        crate::ui::refresh_language(&self.target, false, window, cx);
+        self.translation.update(cx, |state, cx| {
+            state.set_placeholder(self.operation.pending(), window, cx)
+        });
+        window.set_window_title(self.operation.title());
+        cx.notify();
+    }
+
     pub(crate) fn enable_smoke_layout(&mut self) {
         self.smoke_layout = Some(Rc::new(RefCell::new(Vec::new())));
     }
@@ -74,11 +85,11 @@ impl Preview {
                 };
                 assert!(
                     header.size.height <= px(40.),
-                    "Le sélecteur doit rester compact : {header:?}, éditeur : {editor:?}"
+                    "The selector must remain compact: {header:?}, editor: {editor:?}"
                 );
                 assert!(
                     editor.size.height >= px(120.),
-                    "L’éditeur doit occuper l’espace libre : {editor:?}"
+                    "The editor must fill the available space: {editor:?}"
                 );
             }
             true
@@ -117,7 +128,7 @@ impl Preview {
                 window,
                 |this, _, event: &SelectEvent<Vec<String>>, window, cx| {
                     if let SelectEvent::Confirm(Some(language)) = event {
-                        this.settings.source_language = language.clone();
+                        this.settings.source_language = canonical_language(language).to_owned();
                         this.translate(false, window, cx);
                     }
                 },
@@ -127,7 +138,7 @@ impl Preview {
                 window,
                 |this, _, event: &SelectEvent<Vec<String>>, window, cx| {
                     if let SelectEvent::Confirm(Some(language)) = event {
-                        this.settings.target_language = language.clone();
+                        this.settings.target_language = canonical_language(language).to_owned();
                         this.translate(false, window, cx);
                     }
                 },
@@ -192,7 +203,7 @@ impl Preview {
         };
         self.busy = true;
         self.status = if alternative {
-            "Nouvelle proposition en cours…"
+            t("Generating a new suggestion…")
         } else {
             self.operation.pending()
         }
@@ -216,12 +227,13 @@ impl Preview {
                     Ok(Ok(text)) => {
                         this.translation
                             .update(cx, |state, cx| state.set_value(text, window, cx));
-                        this.status =
-                            "Prêt — tu peux modifier le résultat avant de remplacer.".into();
+                        this.status = t("Ready — you can edit the result before replacing.").into();
                     }
                     Ok(Err(error)) => this.status = error.to_string(),
-                    Err(error) if error.is_cancelled() => this.status = "Traitement annulé.".into(),
-                    Err(_) => this.status = "Le service de traitement a échoué.".into(),
+                    Err(error) if error.is_cancelled() => {
+                        this.status = t("Processing cancelled.").into()
+                    }
+                    Err(_) => this.status = t("The processing service failed.").into(),
                 }
                 cx.notify();
             });
@@ -237,7 +249,7 @@ impl Preview {
         let text = self.translation.read(cx).value().to_string();
         let selection = self.selection.clone();
         self.replacing = true;
-        self.status = "Remplacement dans la fenêtre d’origine…".into();
+        self.status = t("Replacing in the original window…").into();
         let task = self
             .runtime
             .spawn_blocking(move || windows::replace(&selection, &text));
@@ -252,7 +264,7 @@ impl Preview {
                         window.activate_window();
                     }
                     Err(_) => {
-                        this.status = "Le remplacement a échoué. Utilise Copier.".into();
+                        this.status = t("Replacement failed. Use Copy.").into();
                         window.activate_window();
                     }
                 }
@@ -274,9 +286,9 @@ impl Preview {
             let _ = this.update_in(cx, |this, _, cx| {
                 this.copying = false;
                 this.status = match result {
-                    Ok(Ok(())) => "Résultat copié dans le presse-papiers.".into(),
+                    Ok(Ok(())) => t("Result copied to the clipboard.").into(),
                     Ok(Err(error)) => error.to_string(),
-                    Err(_) => "Copie impossible.".into(),
+                    Err(_) => t("Unable to copy.").into(),
                 };
                 cx.notify();
             });
@@ -343,13 +355,13 @@ impl Render for Preview {
                         .gap_2()
                         .child(
                             Select::new(&self.source)
-                                .title_prefix("Source : ")
+                                .title_prefix(t("Source: "))
                                 .disabled(self.replacing || self.copying)
                                 .flex_1(),
                         )
                         .child(
                             Select::new(&self.target)
-                                .title_prefix("Cible : ")
+                                .title_prefix(t("Target: "))
                                 .disabled(self.replacing || self.copying)
                                 .flex_1(),
                         ),
@@ -361,11 +373,11 @@ impl Render for Preview {
                     .child(
                         Button::new("original")
                             .ghost()
-                            .label(if self.original_visible {
-                                "Masquer l’original"
+                            .label(t(if self.original_visible {
+                                "Hide original"
                             } else {
-                                "Voir l’original"
-                            })
+                                "Show original"
+                            }))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.original_visible = !this.original_visible;
                                 cx.notify();
@@ -374,7 +386,7 @@ impl Render for Preview {
                     .child(
                         Button::new("settings")
                             .ghost()
-                            .label("Paramètres")
+                            .label(t("Settings"))
                             .disabled(self.replacing)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 let _ = this
@@ -404,18 +416,14 @@ impl Render for Preview {
                 div()
                     .text_sm()
                     .text_color(cx.theme().muted_foreground)
-                    .child(self.status.clone()),
+                    .child(crate::i18n::localize_message(&self.status)),
             )
             .child(
                 h_flex()
                     .gap_2()
                     .child(
                         Button::new("alternative")
-                            .label(if has_text {
-                                "Nouvelle proposition"
-                            } else {
-                                "Réessayer"
-                            })
+                            .label(t(if has_text { "New suggestion" } else { "Retry" }))
                             .disabled(unavailable)
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.translate(has_text, window, cx)
@@ -425,7 +433,7 @@ impl Render for Preview {
                     .child(
                         Button::new("cancel")
                             .ghost()
-                            .label("Annuler")
+                            .label(t("Cancel"))
                             .disabled(self.replacing)
                             .on_click(|_, window, _| window.remove_window()),
                     ),
@@ -436,14 +444,14 @@ impl Render for Preview {
                     .justify_end()
                     .child(
                         Button::new("copy")
-                            .label("Copier")
+                            .label(t("Copy"))
                             .disabled(unavailable || !has_text)
                             .on_click(cx.listener(|this, _, window, cx| this.copy(window, cx))),
                     )
                     .child(
                         Button::new("replace")
                             .primary()
-                            .label("Remplacer")
+                            .label(t("Replace"))
                             .disabled(unavailable || !has_text)
                             .on_click(cx.listener(|this, _, window, cx| this.replace(window, cx))),
                     ),

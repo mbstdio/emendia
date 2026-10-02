@@ -32,6 +32,6 @@ pub fn local_provider(operation: crate::settings::Operation) -> Result<String> {
                 Err(_) => return,
             }
         }
-    }).context("Impossible de démarrer le provider de diagnostic")?;
+    }).context("Unable to start the smoke test provider")?;
     Ok(format!("http://{address}/v1"))
 }

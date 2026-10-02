@@ -50,6 +50,6 @@ fn update_titlebar(window: &mut Window, cx: &mut App) {
         && let RawWindowHandle::Win32(handle) = handle.as_raw()
         && let Err(error) = windows::set_dark_titlebar(handle.hwnd.get(), cx.theme().mode.is_dark())
     {
-        tracing::debug!(%error, "Impossible d’appliquer le thème à la barre de titre");
+        tracing::debug!(%error, "Unable to apply the title bar theme");
     }
 }
