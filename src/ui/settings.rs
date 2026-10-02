@@ -6,6 +6,7 @@ use crate::{
     ui::{LanguageSelect, language_select, style_buttons, text_input},
 };
 use anyhow::{Context as _, Result};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
@@ -20,6 +21,7 @@ use tokio::task::AbortHandle;
 
 const PROVIDERS: &[&str] = &["OpenAI", "LM Studio", "Ollama", "Custom"];
 const ONBOARDING_HERO_HEIGHT: f32 = 310.;
+const ONBOARDING_TITLE_BAR_HEIGHT: f32 = 34.;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Category {
@@ -1078,6 +1080,7 @@ impl SettingsView {
             .child(navigation)
             .child(dots);
         let mut root = v_flex()
+            .relative()
             .size_full()
             .bg(background)
             .text_color(cx.theme().foreground)
@@ -1115,7 +1118,14 @@ impl SettingsView {
                     ),
             );
         } else if let Some(header) = fixed_header {
-            root = root.child(div().flex_shrink_0().px_8().pt_5().pb_3().child(header));
+            root = root.child(
+                div()
+                    .flex_shrink_0()
+                    .px_8()
+                    .pt(px(ONBOARDING_TITLE_BAR_HEIGHT + 20.))
+                    .pb_3()
+                    .child(header),
+            );
         }
         root.child(
             div()
@@ -1141,6 +1151,23 @@ impl SettingsView {
                 )),
         )
         .child(footer)
+        // Overlay the native window-control regions without reserving space above the hero.
+        .child(
+            div().absolute().top_0().left_0().w_full().child(
+                TitleBar::new()
+                    .h(px(ONBOARDING_TITLE_BAR_HEIGHT))
+                    .bg(transparent)
+                    .when(step == 0, |bar| {
+                        // Keep the controls legible over the photo in both themes.
+                        bar.bg(linear_gradient(
+                            90.,
+                            linear_color_stop(transparent, 0.78),
+                            linear_color_stop(background, 0.92),
+                        ))
+                    })
+                    .border_0(),
+            ),
+        )
     }
 
     fn localize(&mut self, window: &mut Window, cx: &mut Context<Self>) {

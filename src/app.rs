@@ -585,6 +585,7 @@ impl Controller {
             display_id,
             is_resizable: !onboarding,
             titlebar: Some(TitlebarOptions {
+                appears_transparent: onboarding,
                 title: Some(
                     t(if onboarding {
                         "Emendia — Welcome"
