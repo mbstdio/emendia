@@ -182,6 +182,9 @@ mod tests {
         });
         let settings = Settings {
             base_url: format!("http://{address}/v1"),
+            model: "configured-model".into(),
+            source_language: "Allemand".into(),
+            target_language: "Français".into(),
             ..Settings::default()
         };
         let result = Translator::new()?
@@ -198,6 +201,10 @@ mod tests {
         let json: serde_json::Value =
             serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
         assert_eq!(json["stream"], false);
+        assert_eq!(json["model"], "configured-model");
+        let prompt = json["messages"][0]["content"].as_str().unwrap();
+        assert!(prompt.contains("The source language is Allemand"));
+        assert!(prompt.contains("Translate into Français"));
         assert_eq!(
             json["messages"].as_array().unwrap().len(),
             if previous.is_some() { 4 } else { 2 }

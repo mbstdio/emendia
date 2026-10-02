@@ -142,6 +142,79 @@ fn clipboard_and_native_edit_round_trip() -> Result<()> {
         thread::sleep(Duration::from_millis(20));
     }
     assert_eq!(read_text(unsafe { GetCurrentProcessId() })?.0, "Hello");
+    // The background path must paste without foreground activation as well.
+    unsafe {
+        SendMessageW(edit, 0x00b1, WPARAM(6), LPARAM(11));
+    }
+    let quick_selection = capture(capture_target()?)?;
+    assert_eq!(quick_selection.text, "Hello");
+    replace_quick(&quick_selection, "Salut")?;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let mut text = [0u16; 128];
+        let length = unsafe {
+            SendMessageW(
+                edit,
+                WM_GETTEXT,
+                WPARAM(text.len()),
+                LPARAM(text.as_mut_ptr() as isize),
+            )
+        }
+        .0 as usize;
+        if String::from_utf16_lossy(&text[..length]) == "Avant Salut Après" {
+            break;
+        }
+        if Instant::now() >= deadline {
+            bail!("Quick Translate did not paste in the native edit");
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(read_text(unsafe { GetCurrentProcessId() })?.0, "Salut");
+    // A stale selection must not trigger a background paste or change the clipboard.
+    assert!(replace_quick(&quick_selection, "wrong").is_err());
+    assert_eq!(read_text(unsafe { GetCurrentProcessId() })?.0, "Salut");
+
+    // A different foreground window must be left alone by the quick path.
+    unsafe {
+        SendMessageW(edit, 0x00b1, WPARAM(6), LPARAM(11));
+    }
+    let quick_selection = capture(capture_target()?)?;
+    let other = unsafe {
+        CreateWindowExW(
+            WS_EX_APPWINDOW,
+            w!("STATIC"),
+            w!("Quick Translate focus test"),
+            WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+            150,
+            150,
+            200,
+            100,
+            None,
+            None,
+            None,
+            None,
+        )?
+    };
+    unsafe {
+        let _ = SetForegroundWindow(other);
+    }
+    assert_eq!(unsafe { GetForegroundWindow() }, other);
+    let result = replace_quick(&quick_selection, "wrong");
+    let foreground = unsafe { GetForegroundWindow() };
+    unsafe {
+        // STATIC does not restore focus to its EDIT child like a real editor does.
+        let fixture_thread = GetWindowThreadProcessId(fixture, None);
+        let test_thread = GetCurrentThreadId();
+        let attached = AttachThreadInput(test_thread, fixture_thread, true).as_bool();
+        let _ = SetForegroundWindow(fixture);
+        let _ = SetFocus(edit);
+        if attached {
+            let _ = AttachThreadInput(test_thread, fixture_thread, false);
+        }
+        DestroyWindow(other)?;
+    }
+    assert!(result.is_err());
+    assert_eq!(foreground, other, "Quick Translate must not steal focus");
     // Identical text at a different offset must not count as the original selection.
     unsafe {
         assert_ne!(
@@ -156,7 +229,7 @@ fn clipboard_and_native_edit_round_trip() -> Result<()> {
         );
         SendMessageW(edit, 0x00b1, WPARAM(0), LPARAM(7)); // EM_SETSEL
     }
-    let original = capture(capture_target()?)?;
+    let original = capture(capture_target()?).context("capture after restoring fixture focus")?;
     assert_eq!(original.text, "Bonjour");
     unsafe {
         SendMessageW(edit, 0x00b1, WPARAM(8), LPARAM(15));

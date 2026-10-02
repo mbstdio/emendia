@@ -7,6 +7,7 @@ Sélectionner un texte → **Ctrl+Alt+T** → aperçu près de la sélection →
 ## Fonctionnalités
 
 - Hotkey globale configurable, avec capture des touches et détection des conflits.
+- **Quick Translate** : second raccourci configurable (**Ctrl+Alt+Q** par défaut) pour traduire et remplacer directement la sélection en arrière-plan, sans validation.
 - Fenêtre compacte et déplaçable, placée près de la sélection via Windows UI Automation ; repli près du curseur lorsque les coordonnées ne sont pas accessibles.
 - Positionnement dans la zone utile du moniteur, avec prise en compte du DPI.
 - Langue source automatique ou explicite et langue cible explicite, configurables dans les paramètres et dans l’aperçu.
@@ -84,7 +85,7 @@ L’URL doit être une **URL de base**, sans `/chat/completions` à la fin. Pour
 
 Le bouton **Tester la connexion** réalise une vraie petite traduction avec les valeurs du formulaire, sans devoir les enregistrer. Avec OpenAI, cet appel est facturé selon le modèle et ton compte API. Un abonnement ChatGPT ne remplace pas une clé et un accès à l’API.
 
-**Enregistrer** persiste les paramètres et active la hotkey. Les changements de langues dans l’aperçu concernent seulement la traduction en cours. Si la nouvelle hotkey est déjà réservée, l’ancienne reste active.
+**Enregistrer** persiste les paramètres et active les deux raccourcis. Ils doivent être différents. Les changements de langues dans l’aperçu concernent seulement la traduction en cours. Si un nouveau raccourci est déjà réservé, les anciens restent actifs. Le menu **Raccourcis actifs** du tray active/désactive les deux ensemble.
 
 Les préréglages proposent une URL et un modèle d’exemple ; les champs restent éditables. Une modification d’URL recharge la clé associée à cet endpoint, afin de ne pas envoyer la clé d’un autre provider. Effacer la clé puis enregistrer supprime l’identifiant de cet endpoint.
 
@@ -100,6 +101,16 @@ Configuration : `%APPDATA%\TranslationTool\TranslationTool\config\settings.json`
 6. Cliquer sur **Remplacer** pour revenir à la sélection d’origine, ou **Copier** pour coller manuellement.
 
 **Annuler**, Échap et la fermeture de la fenêtre interrompent la traduction sans remplacer le texte. Un second déclenchement pendant une session active remet son aperçu au premier plan. La fermeture est bloquée pendant le bref remplacement en cours.
+
+### Quick Translate
+
+1. Enregistrer le provider, le modèle, les langues source/cible et le raccourci **Quick Translate** dans les paramètres.
+2. Sélectionner du texte puis appuyer sur **Ctrl+Alt+Q** (ou le raccourci configuré) et relâcher ses touches.
+3. Rester dans le document avec la même sélection : la traduction remplace automatiquement le texte, sans aperçu ni clic de validation.
+
+Les paramètres enregistrés sont figés au déclenchement. Pendant une traduction rapide, les nouveaux déclenchements sont ignorés. Si un aperçu est déjà ouvert, l’un ou l’autre raccourci le remet au premier plan. Les anciennes configurations reçoivent automatiquement le raccourci par défaut ; un conflit est signalé dans les paramètres.
+
+Une erreur de traduction ouvre les paramètres avec le problème. Si le remplacement échoue (sélection modifiée, changement de fenêtre, etc.), l’aperçu s’ouvre avec la traduction déjà obtenue et l’erreur, pour permettre **Copier** ou un remplacement manuel sans nouvelle requête. Quick Translate ne reprend pas le focus d’une autre application pour coller. Après un remplacement réussi, la traduction reste dans le presse-papiers.
 
 ### Intégration avec les autres applications
 
@@ -148,9 +159,12 @@ cargo fmt --check
 cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
 cargo run --locked -- --smoke-test
+cargo run --locked -- --smoke-test-quick
 ```
 
 Les tests HTTP utilisent un vrai serveur simulé sur localhost ; aucune clé ni API externe n’est nécessaire. Le smoke test ouvre les paramètres, un aperçu avec texte fictif et le tray pendant trois secondes. Il vérifie que la réponse d’un provider simulé sur localhost est visible, puis quitte, sans enregistrer de paramètres ni contacter un provider externe. L’aperçu de diagnostic n’a aucune destination de remplacement.
+
+Le smoke test Quick Translate vérifie le parcours en arrière-plan puis l’aperçu de récupération : la destination fictive refuse le collage et la traduction obtenue reste visible avec l’erreur, sans second appel au provider.
 
 Un test Windows supplémentaire lance son propre éditeur natif dans un processus séparé et vérifie capture, collage et restauration du presse-papiers (texte et bitmap). Il nécessite une session graphique interactive, prend temporairement le focus et sauvegarde/restaure le presse-papiers ; ne pas utiliser d’autre application pendant son exécution :
 
@@ -161,6 +175,8 @@ cargo test --locked --lib clipboard_and_native_edit_round_trip -- --ignored --no
 Tests manuels de bout en bout recommandés :
 
 - Bloc-notes : capturer une sélection, éditer la traduction et remplacer ; annuler sans changement.
+- Quick Translate : vérifier le remplacement direct avec les langues enregistrées ; changer la sélection ou la fenêtre pendant la requête et vérifier l’aperçu de récupération ; déclencher plusieurs fois pour vérifier qu’une seule traduction est effectuée.
+- Raccourcis : configurer deux combinaisons distinctes, les échanger, tester un conflit et activer/désactiver les deux depuis le tray.
 - Champ éditable du navigateur et éditeur de code : vérifier le retour de focus.
 - Changer la sélection ou le document pendant l’aperçu : le remplacement doit être refusé si le changement est détecté.
 - Changer rapidement de langue puis fermer l’aperçu : aucune ancienne réponse ne doit rouvrir la fenêtre.

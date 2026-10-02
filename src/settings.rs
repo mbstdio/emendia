@@ -30,6 +30,7 @@ pub struct Settings {
     pub source_language: String,
     pub target_language: String,
     pub hotkey: String,
+    pub quick_hotkey: String,
 }
 
 impl Default for Settings {
@@ -40,6 +41,7 @@ impl Default for Settings {
             source_language: AUTO.into(),
             target_language: "Anglais".into(),
             hotkey: "Ctrl+Alt+KeyT".into(),
+            quick_hotkey: "Ctrl+Alt+KeyQ".into(),
         }
     }
 }
@@ -66,6 +68,11 @@ impl Settings {
         {
             bail!("Choisis une langue source et une langue cible explicite.");
         }
+        Ok(())
+    }
+
+    pub fn validate_hotkeys(&self) -> Result<()> {
+        crate::platform::hotkey::parse_pair(&self.hotkey, &self.quick_hotkey)?;
         Ok(())
     }
 
@@ -103,6 +110,7 @@ impl SettingsStore {
 
     pub fn save(&self, settings: &Settings) -> Result<()> {
         settings.validate()?;
+        settings.validate_hotkeys()?;
         fs::create_dir_all(
             self.path
                 .parent()
@@ -200,5 +208,30 @@ mod tests {
             normalize_endpoint(" https://api.openai.com/v1/ \n"),
             "https://api.openai.com/v1"
         );
+    }
+
+    #[test]
+    fn old_configuration_gets_a_quick_shortcut_and_preserves_languages() {
+        let settings: Settings = serde_json::from_str(
+            r#"{"hotkey":"Ctrl+Alt+KeyY","source_language":"Allemand","target_language":"Français"}"#,
+        ).unwrap();
+        assert_eq!(settings.quick_hotkey, "Ctrl+Alt+KeyQ");
+        assert_eq!(settings.hotkey, "Ctrl+Alt+KeyY");
+        assert_eq!(settings.source_language, "Allemand");
+        assert_eq!(settings.target_language, "Français");
+        settings.validate_hotkeys().unwrap();
+    }
+
+    #[test]
+    fn shortcuts_must_be_valid_and_distinct() {
+        let mut settings = Settings {
+            quick_hotkey: "Alt+Ctrl+KeyT".into(),
+            ..Settings::default()
+        };
+        assert!(settings.validate_hotkeys().is_err());
+        settings.quick_hotkey = "Shift+KeyQ".into();
+        assert!(settings.validate_hotkeys().is_err());
+        settings.quick_hotkey = "Ctrl+Alt+KeyY".into();
+        settings.validate_hotkeys().unwrap();
     }
 }

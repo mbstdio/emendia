@@ -15,7 +15,7 @@ impl Tray {
     pub fn new() -> Result<Self> {
         let menu = Menu::new();
         let settings = MenuItem::new("Paramètres", true, None);
-        let enabled = CheckMenuItem::new("Raccourci actif", true, true, None);
+        let enabled = CheckMenuItem::new("Raccourcis actifs", true, true, None);
         let quit = MenuItem::new("Quitter", true, None);
         menu.append_items(&[&settings, &enabled, &PredefinedMenuItem::separator(), &quit])?;
         let mut rgba = Vec::with_capacity(32 * 32 * 4);

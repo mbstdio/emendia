@@ -1,6 +1,6 @@
 use crate::{
     app::Controller,
-    platform::hotkey,
+    platform::hotkey::{self, TranslationMode},
     settings::{self, Settings},
     ui::{LanguageSelect, language_select, text_input},
 };
@@ -27,7 +27,8 @@ pub struct SettingsView {
     source: LanguageSelect,
     target: LanguageSelect,
     hotkey: String,
-    recording: bool,
+    quick_hotkey: String,
+    recording: Option<TranslationMode>,
     focus: FocusHandle,
     pub status: String,
     testing: bool,
@@ -146,7 +147,8 @@ impl SettingsView {
             source,
             target,
             hotkey: settings.hotkey,
-            recording: false,
+            quick_hotkey: settings.quick_hotkey,
+            recording: None,
             focus: cx.focus_handle(),
             status: error.or(key_error).unwrap_or_else(|| {
                 "Configure le provider, puis teste la connexion et enregistre.".into()
@@ -206,9 +208,10 @@ impl SettingsView {
                 .context("Choisis la langue cible")?
                 .clone(),
             hotkey: self.hotkey.clone(),
+            quick_hotkey: self.quick_hotkey.clone(),
         };
         settings.validate()?;
-        hotkey::parse(&settings.hotkey)?;
+        settings.validate_hotkeys()?;
         Ok((settings, self.api_key.read(cx).value().trim().into()))
     }
 
@@ -219,7 +222,7 @@ impl SettingsView {
         });
         self.status = match result {
             Ok(()) => {
-                "Paramètres enregistrés. La hotkey est active ; tu peux fermer cette fenêtre."
+                "Paramètres enregistrés. Les raccourcis sont actifs ; tu peux fermer cette fenêtre."
                     .into()
             }
             Err(error) => error.to_string(),
@@ -283,13 +286,13 @@ impl SettingsView {
     }
 
     fn record(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
-        if !self.recording {
+        let Some(mode) = self.recording else {
             return;
-        }
+        };
         cx.stop_propagation();
         let stroke = &event.keystroke;
         if stroke.key == "escape" {
-            self.recording = false;
+            self.recording = None;
             cx.notify();
             return;
         }
@@ -325,8 +328,11 @@ impl SettingsView {
         let candidate = parts.join("+");
         match hotkey::parse(&candidate) {
             Ok(_) => {
-                self.hotkey = candidate;
-                self.recording = false;
+                match mode {
+                    TranslationMode::Preview => self.hotkey = candidate,
+                    TranslationMode::Quick => self.quick_hotkey = candidate,
+                }
+                self.recording = None;
                 self.status = "Raccourci capturé. Enregistre pour l’activer.".into();
             }
             Err(error) => self.status = error.to_string(),
@@ -346,6 +352,8 @@ impl Drop for SettingsView {
 impl Render for SettingsView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex().size_full().bg(cx.theme().background).text_color(cx.theme().foreground).p_5().gap_4()
+            .track_focus(&self.focus)
+            .on_key_down(cx.listener(|this, event, _, cx| this.record(event, cx)))
             .child(div().text_xl().font_weight(FontWeight::BOLD).child("Translation Tool"))
             .child(div().text_sm().text_color(cx.theme().muted_foreground).child("Sélectionne un texte → hotkey → vérifie la traduction → remplace."))
             .child(v_flex().id("settings-fields").flex_1().min_h(px(0.)).overflow_y_scroll().gap_3()
@@ -361,13 +369,17 @@ impl Render for SettingsView {
                 .child(h_flex().gap_2()
                     .child(Select::new(&self.source).title_prefix("Source : ").flex_1())
                     .child(Select::new(&self.target).title_prefix("Cible : ").flex_1()))
-                .child(div().text_sm().child("Raccourci global"))
+                .child(div().text_sm().child("Raccourci global — aperçu avec validation"))
                 .child(h_flex().gap_3()
                     .child(div().flex_1().child(self.hotkey.clone()))
-                    .child(div().id("hotkey-recorder").track_focus(&self.focus)
-                        .on_key_down(cx.listener(|this, event, _, cx| this.record(event, cx)))
-                        .child(Button::new("record").label(if self.recording { "Appuie sur le raccourci…" } else { "Changer le raccourci" })
-                            .on_click(cx.listener(|this, _, window, cx| { this.recording = true; this.focus.focus(window, cx); this.status = "Appuie sur la combinaison souhaitée (Échap pour annuler).".into(); cx.notify(); })))))
+                    .child(Button::new("record").label(if self.recording == Some(TranslationMode::Preview) { "Appuie sur le raccourci…" } else { "Changer le raccourci" })
+                        .on_click(cx.listener(|this, _, window, cx| { this.recording = Some(TranslationMode::Preview); this.focus.focus(window, cx); this.status = "Appuie sur la combinaison souhaitée (Échap pour annuler).".into(); cx.notify(); }))))
+                .child(div().text_sm().child("Raccourci global — Quick Translate"))
+                .child(h_flex().gap_3()
+                    .child(div().flex_1().child(self.quick_hotkey.clone()))
+                    .child(Button::new("record-quick").label(if self.recording == Some(TranslationMode::Quick) { "Appuie sur le raccourci…" } else { "Changer le raccourci" })
+                        .on_click(cx.listener(|this, _, window, cx| { this.recording = Some(TranslationMode::Quick); this.focus.focus(window, cx); this.status = "Appuie sur la combinaison souhaitée (Échap pour annuler).".into(); cx.notify(); }))))
+                .child(div().text_sm().text_color(cx.theme().muted_foreground).child("Quick Translate remplace directement la sélection en arrière-plan, avec les langues et le provider enregistrés ci-dessus."))
                 .child(div().text_sm().text_color(cx.theme().muted_foreground).child("Fermer les fenêtres laisse l’application dans le tray. Pour arrêter : tray → Quitter.")))
             .child(div().text_sm().max_h(px(100.)).id("settings-status").overflow_y_scroll().child(self.status.clone()))
             .child(h_flex().gap_2()
@@ -375,7 +387,7 @@ impl Render for SettingsView {
                     .on_click(cx.listener(|this, _, window, cx| this.test(window, cx))))
                 .child(div().flex_1())
                 .child(Button::new("close").ghost().label("Fermer").on_click(|_, window, _| window.remove_window()))
-                .child(Button::new("save").primary().label("Enregistrer").disabled(self.recording)
+                .child(Button::new("save").primary().label("Enregistrer").disabled(self.recording.is_some())
                     .on_click(cx.listener(|this, _, _, cx| this.save(cx)))))
     }
 }

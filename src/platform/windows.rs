@@ -202,6 +202,14 @@ pub fn capture(target: CaptureTarget) -> Result<Selection> {
 }
 
 pub fn replace(selection: &Selection, text: &str) -> Result<()> {
+    replace_inner(selection, text, false)
+}
+
+pub fn replace_quick(selection: &Selection, text: &str) -> Result<()> {
+    replace_inner(selection, text, true)
+}
+
+fn replace_inner(selection: &Selection, text: &str, quick: bool) -> Result<()> {
     let _operation = CLIPBOARD_OPERATION
         .lock()
         .map_err(|_| anyhow::anyhow!("Service presse-papiers interrompu"))?;
@@ -210,13 +218,19 @@ pub fn replace(selection: &Selection, text: &str) -> Result<()> {
     }
     let _com = ComApartment::new()?;
     wait_for_modifiers()?;
+    if quick {
+        // Background translation must not steal focus if the user switched applications.
+        check_foreground(selection.window, selection.process)?;
+    }
     unsafe {
         let window = hwnd(selection.window);
         if !IsWindow(window).as_bool() {
             bail!("La fenêtre d’origine a été fermée. Utilise Copier.");
         }
         // SetForegroundWindow is subject to Windows focus rules; never paste if it failed.
-        let _ = SetForegroundWindow(window);
+        if !quick {
+            let _ = SetForegroundWindow(window);
+        }
     }
     let deadline = Instant::now() + Duration::from_millis(600);
     while check_foreground(selection.window, selection.process).is_err() {

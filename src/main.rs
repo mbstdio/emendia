@@ -27,7 +27,8 @@ fn main() {
 }
 
 fn run() -> Result<()> {
-    let smoke_test = std::env::args().any(|argument| argument == "--smoke-test");
+    let smoke_quick = std::env::args().any(|argument| argument == "--smoke-test-quick");
+    let smoke_test = smoke_quick || std::env::args().any(|argument| argument == "--smoke-test");
     let store = SettingsStore::new()?;
     let (mut settings, first_run, error) = match store.load() {
         Ok(Some(settings)) => (settings, false, None),
@@ -56,7 +57,11 @@ fn run() -> Result<()> {
                     let controller = cx.new(|_| controller);
                 controller.update(cx, |controller, cx| {
                     controller.start(first_run || smoke_test, error, cx);
-                    if smoke_test { controller.open_smoke_preview(cx).expect("Ouverture du diagnostic de traduction"); }
+                     if smoke_quick {
+                         controller.open_smoke_quick(cx).expect("Ouverture du diagnostic Quick Translate");
+                     } else if smoke_test {
+                         controller.open_smoke_preview(cx).expect("Ouverture du diagnostic de traduction");
+                     }
                 });
                     // Keep the coordinator alive even while no windows are open.
                     cx.set_global(AppController {
@@ -69,7 +74,10 @@ fn run() -> Result<()> {
                                 .await;
                             cx.update(|cx| {
                             assert!(cx.windows().len() >= 2, "Paramètres et aperçu doivent être ouverts");
-                            assert!(cx.global::<AppController>()._controller.read(cx).smoke_preview_complete(cx), "La traduction du provider simulé doit être visible dans l’aperçu");
+                             assert!(cx.global::<AppController>()._controller.read(cx).smoke_preview_complete(cx), "La traduction du provider simulé doit être visible dans l’aperçu");
+                             if smoke_quick {
+                                 assert!(cx.global::<AppController>()._controller.read(cx).smoke_quick_complete(cx), "Un collage impossible doit conserver la traduction et afficher l’erreur sans nouvelle requête");
+                             }
                                 tracing::info!(
                                 "Smoke test GPUI : paramètres, aperçu traduit, tray et boucle d’événements actifs"
                                 );

@@ -1,6 +1,6 @@
 use crate::{
     platform::{
-        hotkey::HotkeyRegistration,
+        hotkey::{HotkeyRegistration, TranslationMode},
         tray::Tray,
         windows::{self, Selection},
     },
@@ -24,7 +24,7 @@ pub struct Controller {
     tray: Tray,
     settings_window: Option<(AnyWindowHandle, WeakEntity<SettingsView>)>,
     preview_window: Option<(AnyWindowHandle, WeakEntity<Preview>)>,
-    capturing: bool,
+    session_active: bool,
 }
 
 impl Controller {
@@ -33,11 +33,30 @@ impl Controller {
         Ok(())
     }
 
+    pub fn open_smoke_quick(&mut self, cx: &mut Context<Self>) -> Result<()> {
+        self.quick_translate(Selection::smoke_fixture()?, self.settings.clone(), cx);
+        // Exercise both trigger paths while the HTTP request is still pending.
+        assert!(self.session_active);
+        self.capture(TranslationMode::Quick, cx);
+        self.capture(TranslationMode::Preview, cx);
+        assert!(self.session_active);
+        Ok(())
+    }
+
     pub fn smoke_preview_complete(&self, cx: &App) -> bool {
         self.preview_window
             .as_ref()
             .and_then(|(_, view)| view.upgrade())
             .is_some_and(|view| view.read(cx).smoke_result(cx))
+    }
+
+    pub fn smoke_quick_complete(&self, cx: &App) -> bool {
+        !self.session_active
+            && self
+                .preview_window
+                .as_ref()
+                .and_then(|(_, view)| view.upgrade())
+                .is_some_and(|view| view.read(cx).smoke_recovery_result(cx))
     }
 
     pub fn new(
@@ -55,7 +74,7 @@ impl Controller {
             tray: Tray::new()?,
             settings_window: None,
             preview_window: None,
-            capturing: false,
+            session_active: false,
         })
     }
 
@@ -67,7 +86,7 @@ impl Controller {
     ) {
         let error = self
             .hotkey
-            .change(&self.settings.hotkey)
+            .change(&self.settings.hotkey, &self.settings.quick_hotkey)
             .err()
             .map(|e| e.to_string())
             .or_else(|| self.settings.validate().err().map(|e| e.to_string()))
@@ -101,7 +120,8 @@ impl Controller {
                 let result = if self.hotkey.enabled() {
                     self.hotkey.disable()
                 } else {
-                    self.hotkey.change(&self.settings.hotkey)
+                    self.hotkey
+                        .change(&self.settings.hotkey, &self.settings.quick_hotkey)
                 };
                 self.tray.enabled.set_checked(self.hotkey.enabled());
                 if let Err(error) = result {
@@ -122,14 +142,16 @@ impl Controller {
             }
         }
         while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
-            if event.state == HotKeyState::Pressed && self.hotkey.matches(event.id) {
-                self.capture(cx);
+            if event.state == HotKeyState::Pressed
+                && let Some(mode) = self.hotkey.mode(event.id)
+            {
+                self.capture(mode, cx);
             }
         }
     }
 
-    fn capture(&mut self, cx: &mut Context<Self>) {
-        if self.capturing {
+    fn capture(&mut self, mode: TranslationMode, cx: &mut Context<Self>) {
+        if self.session_active {
             return;
         }
         if let Some((handle, _)) = &self.preview_window {
@@ -148,7 +170,19 @@ impl Controller {
                 return;
             }
         };
-        self.capturing = true;
+        let settings = self.settings.clone();
+        let quick_key = if mode == TranslationMode::Quick {
+            match settings::load_api_key(&settings.base_url) {
+                Ok(key) => Some(key),
+                Err(error) => {
+                    self.open_settings(Some(format!("Quick Translate : {error}")), cx);
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+        self.session_active = true;
         let capture = self
             .runtime
             .spawn_blocking(move || windows::capture(target));
@@ -158,9 +192,12 @@ impl Controller {
                 .context("Le service de capture a échoué")
                 .and_then(|r| r);
             let _ = this.update(cx, |this, cx| {
-                this.capturing = false;
+                this.session_active = false;
                 match result {
-                    Ok(selection) => this.open_preview(selection, cx),
+                    Ok(selection) => match quick_key {
+                        Some(key) => this.quick_translate_with_key(selection, settings, key, cx),
+                        None => this.open_preview(selection, cx),
+                    },
                     Err(error) => this.open_settings(Some(format!("Capture : {error}")), cx),
                 }
             });
@@ -169,6 +206,83 @@ impl Controller {
     }
 
     fn open_preview(&mut self, selection: Selection, cx: &mut Context<Self>) {
+        self.open_preview_result(selection, self.settings.clone(), None, cx);
+    }
+
+    fn quick_translate(
+        &mut self,
+        selection: Selection,
+        settings: Settings,
+        cx: &mut Context<Self>,
+    ) {
+        let key = match settings::load_api_key(&settings.base_url) {
+            Ok(key) => key,
+            Err(error) => {
+                self.open_settings(Some(format!("Quick Translate : {error}")), cx);
+                return;
+            }
+        };
+        self.quick_translate_with_key(selection, settings, key, cx);
+    }
+
+    fn quick_translate_with_key(
+        &mut self,
+        selection: Selection,
+        settings: Settings,
+        key: String,
+        cx: &mut Context<Self>,
+    ) {
+        // Hold the same session gate from capture through replacement. Neither shortcut
+        // may start another clipboard operation while this translation is pending.
+        self.session_active = true;
+        let translator = self.translator.clone();
+        let runtime = self.runtime.handle().clone();
+        let captured = selection.clone();
+        let snapshot = settings.clone();
+        let task = self.runtime.spawn(async move {
+            let text = translator
+                .translate(&snapshot, &key, &captured.text, None)
+                .await?;
+            let translated = text.clone();
+            let replacement = runtime
+                .spawn_blocking(move || windows::replace_quick(&captured, &translated))
+                .await
+                .context("Le service de remplacement a échoué")
+                .and_then(|r| r);
+            // Return the translation even when pasting fails, without a second API call.
+            Ok::<_, anyhow::Error>((text, replacement))
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task
+                .await
+                .context("Le service Quick Translate a échoué")
+                .and_then(|r| r);
+            let _ = this.update(cx, |this, cx| {
+                this.session_active = false;
+                match result {
+                    Ok((_, Ok(()))) => {}
+                    Ok((text, Err(error))) => this.open_preview_result(
+                        selection,
+                        settings,
+                        Some((text, format!("Quick Translate : {error}"))),
+                        cx,
+                    ),
+                    Err(error) => {
+                        this.open_settings(Some(format!("Quick Translate : {error}")), cx)
+                    }
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn open_preview_result(
+        &mut self,
+        selection: Selection,
+        settings: Settings,
+        result: Option<(String, String)>,
+        cx: &mut Context<Self>,
+    ) {
         let placement = selection.placement;
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::new(
@@ -186,7 +300,6 @@ impl Controller {
             ..Default::default()
         };
         let controller = cx.entity().downgrade();
-        let settings = self.settings.clone();
         let translator = self.translator.clone();
         let runtime = self.runtime.handle().clone();
         match gpui_kit::open_window(options, cx, |window, cx| {
@@ -202,7 +315,13 @@ impl Controller {
                 // Defer until this Controller update has released its GPUI entity lease.
                 cx.defer(move |cx| {
                     let _ = window.update(cx, |_, window, cx| {
-                        preview.update(cx, |view, cx| view.translate(false, window, cx))
+                        preview.update(cx, |view, cx| {
+                            if let Some((text, error)) = result {
+                                view.set_result(text, error, window, cx);
+                            } else {
+                                view.translate(false, window, cx);
+                            }
+                        })
                     });
                 });
             }
@@ -247,26 +366,17 @@ impl Controller {
 
     pub fn save_settings(&mut self, next: Settings, key: &str) -> Result<()> {
         next.validate()?;
-        let previous = self.settings.clone();
-        let was_enabled = self.hotkey.enabled();
-        self.hotkey.change(&next.hotkey)?;
-        let saved = (|| {
-            let old_key = settings::load_api_key(&next.base_url)?;
-            settings::save_api_key(&next.base_url, key)?;
-            if let Err(error) = self.store.save(&next) {
-                let _ = settings::save_api_key(&next.base_url, &old_key);
-                return Err(error);
-            }
-            Ok(())
-        })();
-        if let Err(error) = saved {
-            if was_enabled {
-                let _ = self.hotkey.change(&previous.hotkey);
-            } else {
-                let _ = self.hotkey.disable();
-            }
-            return Err(error);
-        }
+        next.validate_hotkeys()?;
+        self.hotkey
+            .change_with(&next.hotkey, &next.quick_hotkey, || {
+                let old_key = settings::load_api_key(&next.base_url)?;
+                settings::save_api_key(&next.base_url, key)?;
+                if let Err(error) = self.store.save(&next) {
+                    let _ = settings::save_api_key(&next.base_url, &old_key);
+                    return Err(error);
+                }
+                Ok(())
+            })?;
         self.settings = next;
         self.tray.enabled.set_checked(true);
         Ok(())

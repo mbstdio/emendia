@@ -38,8 +38,25 @@ pub struct Preview {
 }
 
 impl Preview {
+    pub fn set_result(
+        &mut self,
+        text: String,
+        status: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.translation
+            .update(cx, |state, cx| state.set_value(text, window, cx));
+        self.status = status;
+        cx.notify();
+    }
+
     pub(crate) fn smoke_result(&self, cx: &App) -> bool {
         !self.busy && self.translation.read(cx).value() == "Hello, this is a translation test."
+    }
+
+    pub(crate) fn smoke_recovery_result(&self, cx: &App) -> bool {
+        self.smoke_result(cx) && self.status.starts_with("Quick Translate :")
     }
 
     pub fn new(
