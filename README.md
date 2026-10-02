@@ -25,13 +25,17 @@ Select text → press a shortcut → review and edit the suggestion → **Replac
 
 Build Emendia using the [Windows build instructions](#building-on-windows), then run **`emendia.exe`**. This version provides a standalone executable; there is no installer yet.
 
-1. On first launch, **Settings** opens automatically. Later launches stay in the tray; click the tray icon or use its **Settings** menu item.
-2. In **AI Provider**, choose your provider and enter the base URL, exact model name and API key if required.
-3. Click **Test connection**, then **Save**.
-4. In **Translation**, select the default source and target languages. In **Proofreading**, choose independent default styles for preview and Quick Check.
+1. On first launch, a five-step **setup assistant** opens instead of Settings: welcome and appearance, AI provider, translation and proofreading preferences, shortcuts, then review and startup.
+2. Choose your provider and enter the base URL, exact model name and API key if required.
+3. **Test connection** is recommended but optional. Choose your languages, styles and shortcuts, then click **Finish setup** to save and activate them.
+4. Click **Let's go** to leave Emendia running in the tray. Later launches stay in the tray; click the tray icon or use its **Settings** menu item to change your configuration.
 5. Select text in an editor or text field, press a shortcut, then **release its keys**.
 
 ### Default shortcuts
+
+Closing the assistant before finishing leaves setup incomplete; it opens again on the next launch. Changing appearance or interface language does not complete setup. Existing configurations (including imported legacy settings) keep their usual startup behavior. Setup images are embedded in the executable.
+
+New setup and Settings windows open on the monitor containing the cursor, centered in its usable area and using its DPI scaling. The setup window is non-resizable; Settings remains resizable.
 
 | Action | Shortcut |
 | --- | --- |
@@ -46,7 +50,7 @@ Shortcuts can be changed in **Translation**, **Proofreading** or the centralized
 
 | Provider | Base URL | Model |
 | --- | --- | --- |
-| OpenAI | `https://api.openai.com/v1` | Default: `gpt-4.1-mini`; use a model available to your API account |
+| OpenAI | `https://api.openai.com/v1` | Default: `gpt-6-luna`; use a model available to your API account |
 | LM Studio | `http://localhost:1234/v1` | The identifier of the model loaded in LM Studio |
 | Ollama | `http://localhost:11434/v1` | The exact installed model name, such as `llama3.2` |
 | Custom | Your compatible API's base URL, including its prefix | The identifier expected by your server |
@@ -180,6 +184,8 @@ cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
 
 foreach ($language in 'en', 'fr') {
+    cargo run --locked -- --smoke-test-onboarding "--ui-language=$language"
+    cargo run --locked -- --smoke-test-onboarding "--ui-language=$language" --smoke-theme=dark
     cargo run --locked -- --smoke-test "--ui-language=$language"
     cargo run --locked -- --smoke-test-quick "--ui-language=$language"
     cargo run --locked -- --smoke-test-correction "--ui-language=$language"
@@ -187,7 +193,7 @@ foreach ($language in 'en', 'fr') {
 }
 ```
 
-HTTP tests use a real mock server on localhost and require no API key or external provider. Smoke tests open settings, a preview with sample text and the tray, then quit after three seconds, or seven seconds for quick flows. They verify provider results, compact preview layout, non-activating status behavior, wrapping and automatic error-popup closure. Quick flows also verify recovery after a simulated paste failure without making another request. These diagnostics do not have a real replacement destination or save form settings.
+HTTP tests use a real mock server on localhost and require no API key or external provider. Onboarding smoke diagnostics verify that only the setup assistant opens, walk through all five steps, then return to welcome without saving configuration. Other smoke tests open settings, a preview with sample text and the tray, then quit after three seconds, or seven seconds for quick flows. They verify provider results, compact preview layout, non-activating status behavior, wrapping and automatic error-popup closure. Quick flows also verify recovery after a simulated paste failure without making another request. These diagnostics do not have a real replacement destination or save form settings.
 
 An additional Windows test launches an isolated native editor and checks capture, paste, focus preservation and clipboard restoration for text and bitmap. It requires an interactive desktop and temporarily uses focus and the clipboard; do not interact with another application during the test:
 

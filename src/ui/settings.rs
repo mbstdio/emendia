@@ -19,6 +19,7 @@ use gpui_kit::{
 use tokio::task::AbortHandle;
 
 const PROVIDERS: &[&str] = &["OpenAI", "LM Studio", "Ollama", "Custom"];
+const ONBOARDING_HERO_HEIGHT: f32 = 310.;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Category {
@@ -97,6 +98,10 @@ pub struct SettingsView {
     pending: Option<AbortHandle>,
     test_version: u64,
     _subscriptions: Vec<Subscription>,
+    onboarding_step: Option<usize>,
+    hero: std::sync::Arc<Image>,
+    logo_light: std::sync::Arc<Image>,
+    logo_dark: std::sync::Arc<Image>,
 }
 
 impl SettingsView {
@@ -251,7 +256,7 @@ impl SettingsView {
                 |this, _, event: &SelectEvent<Vec<String>>, window, cx| {
                     if let SelectEvent::Confirm(Some(provider)) = event {
                         let preset = match provider.as_str() {
-                            "OpenAI" => Some(("https://api.openai.com/v1", "gpt-4.1-mini")),
+                            "OpenAI" => Some(("https://api.openai.com/v1", "gpt-6-luna")),
                             "LM Studio" => Some(("http://localhost:1234/v1", "local-model")),
                             "Ollama" => Some(("http://localhost:11434/v1", "llama3.2")),
                             _ => None,
@@ -306,6 +311,19 @@ impl SettingsView {
             ));
         }
         Self {
+            onboarding_step: (!settings.onboarding_completed).then_some(0),
+            hero: std::sync::Arc::new(Image::from_bytes(
+                ImageFormat::Jpeg,
+                include_bytes!("../ressources/onboard-hero.jpg").to_vec(),
+            )),
+            logo_light: std::sync::Arc::new(Image::from_bytes(
+                ImageFormat::Png,
+                include_bytes!("../ressources/logo.png").to_vec(),
+            )),
+            logo_dark: std::sync::Arc::new(Image::from_bytes(
+                ImageFormat::Png,
+                include_bytes!("../ressources/logo_w.png").to_vec(),
+            )),
             controller,
             provider,
             base_url,
@@ -328,7 +346,7 @@ impl SettingsView {
             recording: None,
             focus: cx.focus_handle(),
             status: error.or(key_error).unwrap_or_else(|| {
-                if provider_configured {
+                if provider_configured || !settings.onboarding_completed {
                     String::new()
                 } else {
                     t("Configure the provider, then test the connection and save.").into()
@@ -368,6 +386,7 @@ impl SettingsView {
 
     fn values(&self, cx: &App) -> Result<(Settings, String)> {
         let settings = Settings {
+            onboarding_completed: true,
             base_url: self
                 .base_url
                 .read(cx)
@@ -400,19 +419,28 @@ impl SettingsView {
         };
         settings.validate()?;
         settings.validate_hotkeys()?;
-        Ok((settings, self.api_key.read(cx).value().trim().into()))
+        let key = self.api_key.read(cx).value().trim().to_owned();
+        if self.onboarding_step.is_some()
+            && settings.base_url == "https://api.openai.com/v1"
+            && key.is_empty()
+        {
+            anyhow::bail!(t("Enter your OpenAI API key, or choose another provider."));
+        }
+        Ok((settings, key))
     }
 
-    fn save(&mut self, cx: &mut Context<Self>) {
+    fn save(&mut self, cx: &mut Context<Self>) -> bool {
         let result = self.values(cx).and_then(|(settings, key)| {
             self.controller
                 .update(cx, |app, _| app.save_settings(settings, &key))?
         });
+        let success = result.is_ok();
         self.status = match result {
             Ok(()) => t("Settings saved. Shortcuts are active; you can close this window.").into(),
             Err(error) => error.to_string(),
         };
         cx.notify();
+        success
     }
 
     fn test(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -600,7 +628,7 @@ impl Render for SettingsView {
                     .child(field("Base URL", Input::new(&self.base_url)))
                     .child(hint("Include /v1, without /chat/completions.", cx))
                     .child(field("Model", Input::new(&self.model)))
-                    .child(field("API key", Input::new(&self.api_key)))
+                    .child(field("API key", Input::new(&self.api_key).mask_toggle()))
                     .child(hint(
                         "Stored in Windows Credential Manager. Optional for a local server.",
                         cx,
@@ -625,6 +653,27 @@ impl Render for SettingsView {
                     .child(self.shortcut(TranslationMode::Preview, cx))
                     .child(section("Quick Translate", "Translates and replaces the selection in the background using the saved languages and provider.", cx))
                     .child(self.shortcut(TranslationMode::Quick, cx));
+                if self.onboarding_step.is_some() {
+                    fields = v_flex().gap_4()
+                        .child(field("Source language", Select::new(&self.source).w_full()))
+                        .child(field("Target language", Select::new(&self.target).w_full()))
+                        .child(hint("Interface language does not affect translation languages.", cx))
+                        .child(hint("Proofreading keeps the text's language. Faithful mode preserves tone and wording; other modes adjust the style without changing the meaning.", cx))
+                        .child(field("With preview", style_buttons("onboarding-style", self.style)
+                            .on_click(cx.listener(|this, indices: &Vec<usize>, _, cx| {
+                                if let Some(style) = indices.first().and_then(|index| CorrectionStyle::ALL.get(*index)).copied() {
+                                    this.style = style;
+                                    cx.notify();
+                                }
+                            }))))
+                        .child(field("Quick Check", style_buttons("onboarding-quick-style", self.quick_style)
+                            .on_click(cx.listener(|this, indices: &Vec<usize>, _, cx| {
+                                if let Some(style) = indices.first().and_then(|index| CorrectionStyle::ALL.get(*index)).copied() {
+                                    this.quick_style = style;
+                                    cx.notify();
+                                }
+                            }))));
+                }
             }
             Category::Correction => {
                 fields = fields
@@ -658,6 +707,9 @@ impl Render for SettingsView {
                     .child(field("Quick Check", self.shortcut(TranslationMode::CorrectionQuick, cx)))
                     .child(hint("Shortcuts are shared with Translation and Proofreading. They must be distinct. Save to activate them.", cx));
             }
+        }
+        if self.onboarding_step.is_some() {
+            return self.render_onboarding(fields, cx).into_any_element();
         }
         h_flex()
             .size_full()
@@ -725,15 +777,360 @@ impl Render for SettingsView {
                                             .primary()
                                             .label(t("Save"))
                                             .disabled(self.recording.is_some())
-                                            .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.save(cx);
+                                            })),
                                     ),
                             ),
                     ),
             )
+            .into_any_element()
     }
 }
 
 impl SettingsView {
+    fn advance_onboarding(&mut self, cx: &mut Context<Self>) {
+        let step = self.onboarding_step.unwrap_or(0);
+        if (1..=3).contains(&step)
+            && let Err(error) = self.values(cx)
+        {
+            self.status = error.to_string();
+            cx.notify();
+            return;
+        }
+        if step == 4 && !self.save(cx) {
+            return;
+        }
+        self.set_onboarding_step(step + 1, cx);
+    }
+
+    fn set_onboarding_step(&mut self, step: usize, cx: &mut Context<Self>) {
+        self.cancel_test();
+        self.status.clear();
+        self.onboarding_step = Some(step);
+        self.category = match step {
+            1 => Category::Provider,
+            2 => Category::Translation,
+            3 => Category::Shortcuts,
+            _ => Category::General,
+        };
+        cx.notify();
+    }
+
+    pub fn smoke_onboarding_step(&mut self, step: usize, cx: &mut Context<Self>) {
+        assert!(step <= 5, "Smoke diagnostics must never save setup");
+        if step == 5 {
+            assert_eq!(self.onboarding_step, Some(4));
+            // Exercise backward navigation while retaining unsaved form values.
+            let model = self.model.read(cx).value();
+            self.set_onboarding_step(0, cx);
+            assert_eq!(self.model.read(cx).value(), model);
+            return;
+        }
+        if step == 0 {
+            assert_eq!(self.onboarding_step, Some(0));
+        } else {
+            assert_eq!(self.onboarding_step, Some(step - 1));
+            self.advance_onboarding(cx);
+            assert_eq!(self.onboarding_step, Some(step));
+        }
+    }
+
+    fn render_onboarding(&self, fields: Div, cx: &mut Context<Self>) -> Div {
+        let step = self.onboarding_step.unwrap_or(0);
+        let background = cx.theme().background;
+        let mut transparent = background;
+        transparent.a = 0.;
+        let title = match step {
+            0 => "Welcome to Emendia",
+            1 => "Connect your AI provider",
+            2 => "Make Emendia yours",
+            3 => "Choose your shortcuts",
+            4 => "Ready to start",
+            _ => "You're all set!",
+        };
+        let description = match step {
+            0 => "Translate, proofread and refine your text without leaving your application.",
+            1 => {
+                "Choose a cloud or local model. Testing the connection is recommended but optional."
+            }
+            2 => "Choose your default translation languages and proofreading styles.",
+            3 => {
+                "Keep the defaults or record your own shortcuts. Preview lets you review; quick actions replace text directly."
+            }
+            4 => "Review your configuration, then save it to activate Emendia.",
+            _ => {
+                "Open an editor, select text, press your translation shortcut and release its keys. Review the suggestion, then choose Replace or Copy."
+            }
+        };
+        let heading = v_flex()
+            .gap_2()
+            .child(
+                div()
+                    .text_2xl()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(t(title)),
+            )
+            .child(hint(description, cx));
+        let mut content = v_flex().gap_5().w_full().max_w(px(660.)).mx_auto();
+        let mut fixed_header = None;
+        if step == 0 {
+            content = content.text_center().child(heading).child(
+                h_flex()
+                    .gap_4()
+                    .items_stretch()
+                    .child(div().flex_1().min_w(px(0.)).text_left().child(field(
+                        "Interface language",
+                        Select::new(&self.language).w_full(),
+                    )))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .text_left()
+                            .child(field("Theme", Select::new(&self.theme).w_full())),
+                    ),
+            );
+        } else {
+            fixed_header = Some(
+                v_flex()
+                    .gap_5()
+                    .w_full()
+                    .max_w(px(660.))
+                    .mx_auto()
+                    .child(
+                        h_flex()
+                            .gap_3()
+                            .items_center()
+                            .child(
+                                img(if cx.theme().is_dark() {
+                                    self.logo_dark.clone()
+                                } else {
+                                    self.logo_light.clone()
+                                })
+                                .size(px(40.))
+                                .object_fit(ObjectFit::Contain),
+                            )
+                            .child(div().text_sm().child(format!(
+                                "{} {} {} 5",
+                                t("Step"),
+                                step.min(4) + 1,
+                                t("of")
+                            ))),
+                    )
+                    .child(heading),
+            );
+            if step < 4 {
+                content = content.child(fields);
+                if step == 1 {
+                    content = content.child(hint("For local providers, start the server and load the model before testing. OpenAI requires API credits, separate from a ChatGPT subscription.", cx));
+                }
+            } else if step == 4 {
+                content = content
+                    .child(
+                        v_flex()
+                            .gap_2()
+                            .p_4()
+                            .rounded_lg()
+                            .bg(cx.theme().secondary)
+                            .child(format!(
+                                "{}: {}",
+                                t("Provider"),
+                                self.provider
+                                    .read(cx)
+                                    .selected_value()
+                                    .cloned()
+                                    .unwrap_or_default()
+                            ))
+                            .child(format!("{}: {}", t("Model"), self.model.read(cx).value()))
+                            .child(format!(
+                                "{}: {}",
+                                t("Base URL"),
+                                self.base_url.read(cx).value()
+                            ))
+                            .child(format!(
+                                "{}: {}",
+                                t("Source language"),
+                                self.source
+                                    .read(cx)
+                                    .selected_value()
+                                    .cloned()
+                                    .unwrap_or_default()
+                            ))
+                            .child(format!(
+                                "{}: {}",
+                                t("Target language"),
+                                self.target
+                                    .read(cx)
+                                    .selected_value()
+                                    .cloned()
+                                    .unwrap_or_default()
+                            ))
+                            .child(format!(
+                                "{}: {} / {}",
+                                t("Proofreading"),
+                                self.style.label(),
+                                self.quick_style.label()
+                            ))
+                            .child(format!(
+                                "{}: {} · {} · {} · {}",
+                                t("Shortcuts"),
+                                self.hotkey,
+                                self.quick_hotkey,
+                                self.correction_hotkey,
+                                self.quick_correction_hotkey
+                            )),
+                    )
+                    .child(
+                        Checkbox::new("onboarding-startup")
+                            .label(t("Launch at Windows startup"))
+                            .checked(self.launch_at_startup)
+                            .on_click(cx.listener(|this, checked, _, cx| {
+                                this.launch_at_startup = *checked;
+                                cx.notify();
+                            })),
+                    );
+            } else {
+                content = content
+                    .child(
+                        div()
+                            .p_4()
+                            .rounded_lg()
+                            .bg(cx.theme().secondary)
+                            .child(self.hotkey.clone()),
+                    )
+                    .child(hint(
+                        "Closing windows leaves the application in the tray. To exit: tray → Quit.",
+                        cx,
+                    ));
+            }
+        }
+        let mut navigation = h_flex().gap_3().justify_center();
+        if step > 0 && step < 5 {
+            navigation = navigation.child(
+                Button::new("onboarding-back")
+                    .ghost()
+                    .label(t("Back"))
+                    .disabled(self.recording.is_some())
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let step = this.onboarding_step.unwrap_or(1).saturating_sub(1);
+                        this.set_onboarding_step(step, cx);
+                    })),
+            );
+        }
+        navigation = navigation.child(
+            Button::new("onboarding-next")
+                .primary()
+                .label(t(match step {
+                    0 => "Get started",
+                    4 => "Finish setup",
+                    5 => "Let's go",
+                    _ => "Next",
+                }))
+                .disabled(self.recording.is_some())
+                .on_click(cx.listener(|this, _, window, cx| {
+                    if this.onboarding_step == Some(5) {
+                        window.remove_window();
+                    } else {
+                        this.advance_onboarding(cx);
+                    }
+                })),
+        );
+        let mut dots = h_flex().gap_2().justify_center();
+        for index in 0..5 {
+            dots = dots.child(
+                div()
+                    .size(px(6.))
+                    .rounded_full()
+                    .bg(if index == step.min(4) {
+                        cx.theme().primary
+                    } else {
+                        cx.theme().border
+                    }),
+            );
+        }
+        let footer = v_flex()
+            .gap_3()
+            .flex_shrink_0()
+            .px_6()
+            .pb_5()
+            .child(
+                div()
+                    .id("onboarding-status")
+                    .max_h(px(60.))
+                    .overflow_y_scroll()
+                    .text_sm()
+                    .text_center()
+                    .child(crate::i18n::localize_message(&self.status)),
+            )
+            .child(navigation)
+            .child(dots);
+        let mut root = v_flex()
+            .size_full()
+            .bg(background)
+            .text_color(cx.theme().foreground)
+            .track_focus(&self.focus)
+            .on_key_down(cx.listener(|this, event, _, cx| this.record(event, cx)));
+        if step == 0 {
+            root = root.child(
+                div()
+                    .relative()
+                    .w_full()
+                    .h(px(ONBOARDING_HERO_HEIGHT))
+                    .flex_shrink_0()
+                    .overflow_hidden()
+                    .child(
+                        img(self.hero.clone())
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .w_full()
+                            .h(px(ONBOARDING_HERO_HEIGHT))
+                            .object_fit(ObjectFit::Cover),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .bottom_0()
+                            .left_0()
+                            .w_full()
+                            .h(px(140.))
+                            .bg(linear_gradient(
+                                180.,
+                                linear_color_stop(transparent, 0.),
+                                linear_color_stop(background, 1.),
+                            )),
+                    ),
+            );
+        } else if let Some(header) = fixed_header {
+            root = root.child(div().flex_shrink_0().px_8().pt_5().pb_3().child(header));
+        }
+        root.child(
+            div()
+                .relative()
+                .flex_1()
+                .min_h(px(0.))
+                .child(
+                    div()
+                        .id("onboarding-content")
+                        .size_full()
+                        .overflow_y_scroll()
+                        .px_8()
+                        .pt_5()
+                        .pb_10()
+                        .child(content),
+                )
+                .child(div().absolute().bottom_0().left_0().w_full().h(px(32.)).bg(
+                    linear_gradient(
+                        180.,
+                        linear_color_stop(transparent, 0.),
+                        linear_color_stop(background, 1.),
+                    ),
+                )),
+        )
+        .child(footer)
+    }
+
     fn localize(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         crate::ui::refresh_language(&self.source, true, window, cx);
         crate::ui::refresh_language(&self.target, false, window, cx);
@@ -769,7 +1166,11 @@ impl SettingsView {
                 state.set_selected_index(index, window, cx);
             });
         }
-        window.set_window_title(t("Emendia — Settings"));
+        window.set_window_title(t(if self.onboarding_step.is_some() {
+            "Emendia — Welcome"
+        } else {
+            "Emendia — Settings"
+        }));
     }
 
     fn shortcut(&self, mode: TranslationMode, cx: &mut Context<Self>) -> impl IntoElement {
@@ -843,7 +1244,9 @@ mod tests {
         for category in Category::ALL {
             let path = category.icon().path();
             assert!(
-                assets.load(path.as_ref()).is_ok_and(|asset| asset.is_some()),
+                assets
+                    .load(path.as_ref())
+                    .is_ok_and(|asset| asset.is_some()),
                 "Missing category icon: {path}"
             );
         }

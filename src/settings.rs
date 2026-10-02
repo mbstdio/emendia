@@ -146,6 +146,9 @@ impl Operation {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Settings {
+    // Missing in older configurations: existing users have already configured Emendia.
+    #[serde(default = "onboarding_already_completed")]
+    pub onboarding_completed: bool,
     pub base_url: String,
     pub model: String,
     #[serde(deserialize_with = "deserialize_language")]
@@ -166,8 +169,9 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            onboarding_completed: false,
             base_url: "https://api.openai.com/v1".into(),
-            model: "gpt-4.1-mini".into(),
+            model: "gpt-6-luna".into(),
             source_language: AUTO.into(),
             target_language: "English".into(),
             hotkey: "Ctrl+F12".into(),
@@ -181,6 +185,10 @@ impl Default for Settings {
             ui_language: UiLanguage::System,
         }
     }
+}
+
+fn onboarding_already_completed() -> bool {
+    true
 }
 
 impl Settings {
@@ -365,6 +373,32 @@ pub fn save_api_key(base_url: &str, key: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn onboarding_survives_appearance_saves_and_preserves_existing_users() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SettingsStore {
+            path: dir.path().join("settings.json"),
+            legacy_path: None,
+        };
+        assert!(store.load().unwrap().is_none());
+        let new = Settings::default();
+        assert!(!new.onboarding_completed);
+        let themed = store.save_theme(&new, ThemePreference::Dark).unwrap();
+        store.save_language(&themed, UiLanguage::French).unwrap();
+        assert!(!store.load().unwrap().unwrap().onboarding_completed);
+        let finished = Settings {
+            onboarding_completed: true,
+            ..themed
+        };
+        store.save(&finished).unwrap();
+        assert!(store.load().unwrap().unwrap().onboarding_completed);
+        // Configurations written before onboarding existed must not restart setup.
+        let old: Settings = serde_json::from_str(r#"{"model":"existing-model"}"#).unwrap();
+        assert!(old.onboarding_completed);
+        store.save(&old).unwrap();
+        assert!(store.load().unwrap().unwrap().onboarding_completed);
+    }
 
     #[test]
     fn migration_preserves_legacy_settings_and_never_overwrites_emendia_settings() {

@@ -65,6 +65,68 @@ pub(crate) fn foreground_window() -> isize {
     unsafe { GetForegroundWindow().0 as isize }
 }
 
+pub(crate) fn cursor_monitor() -> Result<u64> {
+    unsafe {
+        let mut cursor = POINT::default();
+        GetCursorPos(&mut cursor)?;
+        Ok(MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST).0 as u64)
+    }
+}
+
+/// Apply the final client size after Windows has established the destination monitor's DPI.
+pub(crate) fn center_window(window: isize, width: f32, height: f32) -> Result<()> {
+    use windows::Win32::{
+        Foundation::RECT,
+        UI::{
+            HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow},
+            WindowsAndMessaging::{SWP_NOZORDER, WINDOW_EX_STYLE, WINDOW_STYLE},
+        },
+    };
+    unsafe {
+        let handle = hwnd(window);
+        let dpi = GetDpiForWindow(handle);
+        if dpi == 0 {
+            bail!("Unable to determine the window DPI");
+        }
+        let scale = dpi as f32 / 96.;
+        let mut rect = RECT {
+            right: (width * scale).round() as i32,
+            bottom: (height * scale).round() as i32,
+            ..Default::default()
+        };
+        AdjustWindowRectExForDpi(
+            &mut rect,
+            WINDOW_STYLE(GetWindowLongPtrW(handle, GWL_STYLE) as u32),
+            false,
+            WINDOW_EX_STYLE(GetWindowLongPtrW(handle, GWL_EXSTYLE) as u32),
+            dpi,
+        )?;
+        let mut info = MONITORINFO {
+            cbSize: size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        GetMonitorInfoW(
+            MonitorFromWindow(handle, MONITOR_DEFAULTTONEAREST),
+            &mut info,
+        )
+        .ok()?;
+        let work_width = info.rcWork.right - info.rcWork.left;
+        let work_height = info.rcWork.bottom - info.rcWork.top;
+        let width = (rect.right - rect.left).min(work_width);
+        let height = (rect.bottom - rect.top).min(work_height);
+        SetWindowPos(
+            handle,
+            None,
+            info.rcWork.left + (work_width - width) / 2,
+            info.rcWork.top + (work_height - height) / 2,
+            width,
+            height,
+            SWP_NOZORDER | SWP_NOACTIVATE,
+        )?;
+        Ok(())
+    }
+}
+
 pub(crate) fn status_is_nonactivating(window: isize) -> bool {
     use windows::Win32::UI::WindowsAndMessaging::{IsWindowVisible, SendMessageW};
     unsafe {

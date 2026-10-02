@@ -13,6 +13,7 @@ use crate::{
 use anyhow::{Context as _, Result};
 use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
 use gpui_kit::*;
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::time::Duration;
 use tokio::runtime::Runtime;
 use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent, menu::MenuEvent};
@@ -165,9 +166,10 @@ impl Controller {
             "fr"
         });
         let error = self
-            .hotkey
-            .change(self.settings.shortcuts())
-            .err()
+            .settings
+            .onboarding_completed
+            .then(|| self.hotkey.change(self.settings.shortcuts()))
+            .and_then(Result::err)
             .map(|e| e.to_string())
             .or_else(|| self.settings.validate().err().map(|e| e.to_string()))
             .or(initial_error);
@@ -197,6 +199,10 @@ impl Controller {
             } else if event.id == *self.tray.settings.id() {
                 self.open_settings(None, cx);
             } else if event.id == *self.tray.enabled.id() {
+                if !self.settings.onboarding_completed {
+                    self.open_settings(None, cx);
+                    continue;
+                }
                 let result = if self.hotkey.enabled() {
                     self.hotkey.disable()
                 } else {
@@ -230,6 +236,10 @@ impl Controller {
     }
 
     fn capture(&mut self, mode: TranslationMode, cx: &mut Context<Self>) {
+        if !self.settings.onboarding_completed {
+            self.open_settings(None, cx);
+            return;
+        }
         if self.session_active {
             return;
         }
@@ -558,20 +568,49 @@ impl Controller {
             return;
         }
         let settings = self.settings.clone();
-        let provider_configured = self.store.load().is_ok_and(|saved| {
-            saved.is_some_and(|settings| settings.validate().is_ok())
-        });
+        let onboarding = !settings.onboarding_completed;
+        let provider_configured = self
+            .store
+            .load()
+            .is_ok_and(|saved| saved.is_some_and(|settings| settings.validate().is_ok()));
         let controller = cx.entity().downgrade();
+        // Use the launch/tray-click monitor for both placement and DPI conversion.
+        let display_id = windows::cursor_monitor()
+            .ok()
+            .map(DisplayId::new)
+            .filter(|id| cx.find_display(*id).is_some());
+        let window_bounds = Bounds::centered(display_id, size(px(860.), px(680.)), cx);
         let options = WindowOptions {
-            window_bounds: Some(WindowBounds::centered(size(px(860.), px(680.)), cx)),
+            window_bounds: Some(WindowBounds::Windowed(window_bounds)),
+            display_id,
+            is_resizable: !onboarding,
             titlebar: Some(TitlebarOptions {
-                title: Some(t("Emendia — Settings").into()),
+                title: Some(
+                    t(if onboarding {
+                        "Emendia — Welcome"
+                    } else {
+                        "Emendia — Settings"
+                    })
+                    .into(),
+                ),
                 ..Default::default()
             }),
             window_min_size: Some(size(px(720.), px(500.))),
             ..Default::default()
         };
         match gpui_kit::open_window(options, cx, |window, cx| {
+            // Windows can rescale the initial placement when creation crosses monitors.
+            // Apply the logical client size once the destination DPI is established.
+            if let Ok(handle) = HasWindowHandle::window_handle(window)
+                && let RawWindowHandle::Win32(handle) = handle.as_raw()
+                && let Err(error) = windows::center_window(
+                    handle.hwnd.get(),
+                    window_bounds.size.width.as_f32(),
+                    window_bounds.size.height.as_f32(),
+                )
+            {
+                tracing::debug!(%error, "Unable to apply the final window bounds");
+            }
             crate::ui::theme::configure_window(window, cx);
             cx.new(|cx| {
                 SettingsView::new(settings, controller, error, provider_configured, window, cx)
@@ -580,6 +619,32 @@ impl Controller {
             Ok((window, view)) => self.settings_window = Some((window, view.downgrade())),
             Err(error) => tracing::error!(%error, "Unable to open settings"),
         }
+    }
+
+    pub fn smoke_onboarding_step(&mut self, step: usize, cx: &mut Context<Self>) {
+        assert!(!self.settings.onboarding_completed);
+        let expected_display = windows::cursor_monitor().ok().map(DisplayId::new);
+        self.open_settings(None, cx);
+        let (handle, view) = self
+            .settings_window
+            .as_ref()
+            .expect("Setup window must exist");
+        handle
+            .update(cx, |_, window, cx| {
+                if step == 0
+                    && let Some(expected_display) = expected_display
+                {
+                    assert_eq!(
+                        window.display(cx).map(|display| display.id()),
+                        Some(expected_display),
+                        "Setup must open on the cursor monitor, using that monitor's DPI"
+                    );
+                }
+                view.update(cx, |view, cx| view.smoke_onboarding_step(step, cx))
+                    .expect("Setup view must exist");
+            })
+            .expect("Setup window must remain open");
+        assert_eq!(cx.windows().len(), 1, "Only onboarding must be open");
     }
 
     pub fn save_settings(&mut self, next: Settings, key: &str) -> Result<()> {

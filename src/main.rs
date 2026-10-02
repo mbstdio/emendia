@@ -27,6 +27,7 @@ fn main() {
 }
 
 fn run() -> Result<()> {
+    let smoke_onboarding = std::env::args().any(|argument| argument == "--smoke-test-onboarding");
     let smoke_correction = std::env::args().any(|argument| {
         matches!(
             argument.as_str(),
@@ -39,7 +40,8 @@ fn run() -> Result<()> {
             "--smoke-test-quick" | "--smoke-test-quick-check"
         )
     });
-    let smoke_test = smoke_correction
+    let smoke_test = smoke_onboarding
+        || smoke_correction
         || smoke_quick
         || std::env::args().any(|argument| argument == "--smoke-test");
     let operation = if smoke_correction {
@@ -49,7 +51,10 @@ fn run() -> Result<()> {
     };
     let store = SettingsStore::new()?;
     let (mut settings, first_run, mut error) = match store.load() {
-        Ok(Some(settings)) => (settings, false, None),
+        Ok(Some(settings)) => {
+            let first_run = !settings.onboarding_completed;
+            (settings, first_run, None)
+        }
         Ok(None) => (Settings::default(), true, None),
         Err(error) => (Settings::default(), true, Some(error.to_string())),
     };
@@ -57,7 +62,15 @@ fn run() -> Result<()> {
         settings = Settings {
             base_url: emendia::smoke::local_provider(operation)?,
             model: "smoke-test".into(),
+            onboarding_completed: !smoke_onboarding,
             ..Settings::default()
+        };
+    }
+    if smoke_onboarding {
+        settings.theme = if std::env::args().any(|argument| argument == "--smoke-theme=dark") {
+            emendia::settings::ThemePreference::Dark
+        } else {
+            emendia::settings::ThemePreference::Light
         };
     }
     if std::env::args().any(|argument| argument == "--ui-language=en") {
@@ -84,7 +97,7 @@ fn run() -> Result<()> {
                     let controller = cx.new(|_| controller);
                 controller.update(cx, |controller, cx| {
                     controller.start(first_run || smoke_test, error, cx);
-                      if smoke_test {
+                       if smoke_test && !smoke_onboarding {
                           // Let the initial Settings window finish its foreground activation
                           // before measuring focus preservation by the status popup.
                           cx.spawn(async move |controller, cx| {
@@ -97,7 +110,22 @@ fn run() -> Result<()> {
                     cx.set_global(AppController {
                         _controller: controller,
                     });
-                    if smoke_test {
+                    if smoke_onboarding {
+                        cx.spawn(async move |cx| {
+                            for step in 0..6 {
+                                cx.background_executor().timer(std::time::Duration::from_millis(500)).await;
+                                cx.update(|cx| {
+                                    let controller = cx.global::<AppController>()._controller.clone();
+                                    controller.update(cx, |controller, cx| controller.smoke_onboarding_step(step, cx));
+                                });
+                            }
+                            cx.background_executor().timer(std::time::Duration::from_millis(500)).await;
+                            cx.update(|cx| {
+                                tracing::info!("GPUI onboarding smoke test: sole setup window, all five steps and backward navigation verified without saving");
+                                cx.quit();
+                            });
+                        }).detach();
+                    } else if smoke_test {
                         cx.spawn(async move |cx| {
                             cx.background_executor()
                                 .timer(std::time::Duration::from_secs(3))
