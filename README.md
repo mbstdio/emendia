@@ -58,6 +58,13 @@ Run `target/release/emendia.exe`. See the [development guide](docs/development.m
 - [Development](docs/development.md): build environment, project layout and verification.
 - [Releases](docs/releasing.md): automated builds, portable and installer downloads, release notes and version tags.
 
+## Roadmap
+
+- [ ] Linux build
+- [ ] Mac build? `¯\_(ツ)_/¯`
+- [ ] Better model selection
+- [ ] Overall interface improvements
+
 ## License
 
 [MIT](LICENSE)
