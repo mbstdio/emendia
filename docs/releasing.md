@@ -128,6 +128,8 @@ Uninstall removes the `Emendia` startup registry entry only when it points to th
 
 ## Local packaging and validation
 
+The executable, window/taskbar icons, notification-area icon, installer and uninstaller use `src/ressources/app-logo.ico`, generated from `app-logo.jpg` with sizes from 16 to 256 pixels. When changing the logo, regenerate the ICO before building; the build script embeds it as Windows resource 1. Shortcuts and the installed-apps entry use the executable's icon.
+
 Install Inno Setup 6.7.3 and make `ISCC.exe` available in `PATH`. From PowerShell at the repository root:
 
 ```powershell

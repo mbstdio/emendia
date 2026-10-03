@@ -33,6 +33,7 @@ OutputBaseFilename=Emendia-{#BuildLabel}-windows-x64-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=..\..\src\ressources\app-logo.ico
 UninstallDisplayIcon={app}\emendia.exe
 CloseApplications=yes
 RestartApplications=no

@@ -1,0 +1,2 @@
+// Resource 1 is used by GPUI window icons and the notification-area icon.
+1 ICON "src/ressources/app-logo.ico"
