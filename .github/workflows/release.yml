@@ -216,9 +216,91 @@ jobs:
         run: |
           ./packaging/windows/test-installer.ps1 -Installer "dist/Emendia-$env:BUILD_LABEL-windows-x64-setup.exe" -PortableExe "dist/Emendia-$env:BUILD_LABEL-windows-x64.exe"
 
+  build-linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_BUILD_JOBS: '2'
+      RUST_TOOLCHAIN: '1.99.0'
+    steps:
+      - name: Check out the requested version
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Install Linux build and desktop-test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang cmake pkg-config \
+            libgtk-3-dev libayatana-appindicator3-dev libdbus-1-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev \
+            libfontconfig1-dev libfreetype6-dev libwayland-dev libvulkan-dev \
+            mesa-vulkan-drivers xvfb xauth openbox desktop-file-utils gnome-keyring
+
+      - name: Install Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+
+      - name: Cache Cargo build files
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: linux-x64-rust-1.99
+
+      - name: Select build filenames
+        id: version
+        env:
+          PUBLISH: ${{ github.event_name == 'push' }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version=$(cargo "+$RUST_TOOLCHAIN" metadata --no-deps --locked --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "emendia"))')
+          if [[ "$PUBLISH" == true ]]; then
+            [[ "$RELEASE_TAG" == "v$version" ]] || { printf 'Tag does not match Cargo version\n' >&2; exit 1; }
+            label="$RELEASE_TAG"
+          else
+            label="v$version-dev-$(git rev-parse --short=8 HEAD)"
+          fi
+          printf 'label=%s\n' "$label" >> "$GITHUB_OUTPUT"
+
+      - name: Check formatting
+        run: cargo "+$RUST_TOOLCHAIN" fmt --check
+
+      - name: Run Clippy
+        run: cargo "+$RUST_TOOLCHAIN" clippy --all-targets --locked -- -D warnings
+
+      - name: Run tests
+        run: cargo "+$RUST_TOOLCHAIN" test --locked
+
+      - name: Build the Linux executable
+        run: cargo "+$RUST_TOOLCHAIN" build --release --locked
+
+      - name: Verify X11 integration and graphical flows
+        env:
+          EMENDIA_BINARY: target/release/emendia
+        run: bash packaging/linux/test-x11.sh
+
+      - name: Package the Linux archive
+        env:
+          BUILD_LABEL: ${{ steps.version.outputs.label }}
+        run: |
+          bash packaging/linux/package.sh "$BUILD_LABEL"
+          ldd target/release/emendia
+          if ldd target/release/emendia | grep -q 'not found'; then exit 1; fi
+
+      - name: Save downloadable Linux build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Emendia-${{ steps.version.outputs.label }}-linux-x64
+          path: target/dist/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+    outputs:
+      label: ${{ steps.version.outputs.label }}
+
   publish:
     if: github.event_name == 'push'
-    needs: [build, verify-installer]
+    needs: [build, verify-installer, build-linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -239,6 +321,17 @@ jobs:
         with:
           name: release-notes
           path: notes
+
+      - name: Download Linux distributions
+        uses: actions/download-artifact@v5
+        with:
+          name: Emendia-${{ needs.build-linux.outputs.label }}-linux-x64
+          path: linux-dist
+
+      - name: Combine distributions and checksums
+        run: |
+          cp linux-dist/*.tar.gz dist/
+          cat linux-dist/SHA256SUMS-linux.txt >> dist/SHA256SUMS.txt
 
       - name: Create or resume a draft and publish its assets
         shell: bash

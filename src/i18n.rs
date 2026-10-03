@@ -30,12 +30,24 @@ pub fn apply(language: UiLanguage) {
     let french = match language {
         UiLanguage::French => true,
         UiLanguage::English => false,
-        UiLanguage::System => {
-            // The primary language occupies the low ten bits of a Windows LANGID.
-            unsafe { windows::Win32::Globalization::GetUserDefaultUILanguage() & 0x03ff == 0x0c }
-        }
+        UiLanguage::System => system_is_french(),
     };
     FRENCH.store(french, Ordering::Relaxed);
+}
+
+fn system_is_french() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        // The primary language occupies the low ten bits of a Windows LANGID.
+        unsafe { windows::Win32::Globalization::GetUserDefaultUILanguage() & 0x03ff == 0x0c }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        ["LC_ALL", "LC_MESSAGES", "LANG"]
+            .into_iter()
+            .find_map(|name| std::env::var(name).ok().filter(|value| !value.is_empty()))
+            .is_some_and(|locale| locale.split(['_', '-', '.', '@']).next() == Some("fr"))
+    }
 }
 
 pub fn t(english: &'static str) -> &'static str {
@@ -172,12 +184,12 @@ catalog! {
         "Appearance" => "Apparence",
         "The theme applies to every application window." => "Le thème s’applique à toutes les fenêtres de l’application.",
         "Theme" => "Thème",
-        "Saved immediately. System follows the Windows theme." => "Le choix est enregistré immédiatement. Système suit le thème de Windows.",
+        "Saved immediately. System follows the desktop theme." => "Le choix est enregistré immédiatement. Système suit le thème du bureau.",
         "Interface language" => "Langue de l’interface",
-        "Saved immediately. System uses French on French Windows, English otherwise." => "Enregistré immédiatement. Système utilise le français sur Windows en français, l’anglais sinon.",
+        "Saved immediately. System uses French for a French system locale, English otherwise." => "Enregistré immédiatement. Système utilise le français si la langue du système est le français, l’anglais sinon.",
         "Startup" => "Démarrage",
         "Find the application in the notification area." => "Retrouve l’application dans la zone de notification.",
-        "Launch at Windows startup" => "Lancer au démarrage de Windows",
+        "Launch at sign-in" => "Lancer à l’ouverture de session",
         "Save to apply this option. The application starts in the tray when you sign in." => "Enregistre pour appliquer cette option. L’application démarre dans le tray à l’ouverture de ta session.",
         "Closing windows leaves the application in the tray. To exit: tray → Quit." => "Fermer les fenêtres laisse l’application dans le tray. Pour arrêter : tray → Quitter.",
         "Provider" => "Provider",
@@ -187,7 +199,7 @@ catalog! {
         "Model" => "Modèle",
         "API key" => "Clé API",
         "Optional for a local server" => "Facultative pour un serveur local",
-        "Stored in Windows Credential Manager. Optional for a local server." => "Enregistrée dans le gestionnaire d’identifiants Windows. Facultative pour un serveur local.",
+        "Stored in the system keyring. Optional for a local server." => "Enregistrée dans le trousseau du système. Facultative pour un serveur local.",
         "Testing…" => "Test en cours…",
         "Test connection" => "Tester la connexion",
         "Default languages" => "Langues par défaut",
@@ -209,7 +221,14 @@ catalog! {
         "Press the desired combination (Escape to cancel)." => "Appuie sur la combinaison souhaitée (Échap pour annuler).",
         "Shortcut capture cancelled." => "Capture du raccourci annulée.",
         "Shortcut captured. Save to activate it." => "Raccourci capturé. Enregistre pour l’activer.",
-        "Use a letter, digit or F1–F24 with Ctrl, Alt or Win." => "Utilise une lettre, un chiffre ou F1–F24 avec Ctrl, Alt ou Win.",
+        "Translate with preview" => "Traduction avec aperçu",
+        "Proofread with preview" => "Correction avec aperçu",
+        "Quick Translate" => "Traduction rapide",
+        "Quick Check" => "Correction rapide",
+        "Unassigned — choose a shortcut" => "Non assigné — choisir un raccourci",
+        "Assign a shortcut to every action before saving." => "Réassigne un raccourci à chaque action avant d’enregistrer.",
+        "Shortcut {shortcut} was already assigned to {actions}. It is now assigned to {target}. Reassign the actions without a shortcut before saving." => "Le raccourci {shortcut} était déjà assigné à {actions}. Il est maintenant assigné à {target}. Réassigne les actions sans raccourci avant d’enregistrer.",
+        "Use a letter, digit or F1–F24 with Ctrl, Alt or Super/Win." => "Utilise une lettre, un chiffre ou F1–F24 avec Ctrl, Alt ou Super/Win.",
         "Theme applied and saved." => "Thème appliqué et enregistré.",
         "Interface language applied and saved." => "Langue de l’interface appliquée et enregistrée.",
         "Enter the exact model name available from this provider." => "Renseigne le nom exact du modèle disponible sur ce provider.",
@@ -226,12 +245,12 @@ catalog! {
         "The URL must not contain credentials, query parameters or a fragment." => "L’URL ne doit contenir ni identifiants, ni paramètres, ni fragment.",
         "Enter the model name." => "Renseigne le nom du modèle.",
         "Choose a source language and an explicit target language." => "Choisis une langue source et une langue cible explicite.",
-        "Unable to find the Windows configuration directory" => "Impossible de trouver le dossier de configuration Windows",
+        "Unable to find the configuration directory" => "Impossible de trouver le dossier de configuration",
         "Unreadable configuration" => "Configuration illisible",
         "Unable to read the configuration" => "Impossible de lire la configuration",
         "Missing configuration directory" => "Dossier de configuration absent",
         "Unable to save the configuration" => "Impossible d’enregistrer la configuration",
-        "Unable to access Windows Credential Manager" => "Accès au gestionnaire d’identifiants impossible",
+        "Unable to access the system keyring" => "Accès au trousseau du système impossible",
         "Unable to read the API key" => "Impossible de lire la clé API",
         "Unable to save the API key" => "Impossible d’enregistrer la clé API",
         "No text to process." => "Aucun texte à traiter.",
@@ -242,10 +261,11 @@ catalog! {
         "The provider returned no text" => "Le provider n’a retourné aucun texte",
         "The provider returned empty text." => "Le provider a retourné un texte vide.",
         "Invalid shortcut (example: Ctrl+Alt+KeyT)" => "Raccourci invalide (exemple : Ctrl+Alt+KeyT)",
-        "The shortcut must include Ctrl, Alt or Win." => "Le raccourci doit inclure Ctrl, Alt ou Win.",
+        "The shortcut must include Ctrl, Alt or Super/Win." => "Le raccourci doit inclure Ctrl, Alt ou Super/Win.",
         "Preview and Quick Translate shortcuts must be different." => "Les raccourcis de l’aperçu et du Quick Translate doivent être différents.",
         "All four shortcuts must be different." => "Les quatre raccourcis doivent être différents.",
         "Shortcut already used by another application" => "Raccourci déjà utilisé par une autre application",
+        "Unable to release shortcut" => "Impossible de libérer le raccourci",
         "Provider HTTP error" => "Erreur HTTP du provider",
         "Check the API key and permissions." => "Vérifie la clé API et les permissions.",
         "Check the base URL and model name." => "Vérifie l’URL de base et le nom du modèle.",

@@ -10,6 +10,10 @@ Closing the assistant before finishing quits Emendia and opens setup again on th
 
 Later launches stay in the tray. Click its icon or choose **Settings** to change your configuration. Setup and Settings open on the cursor's monitor, centered in its usable area with its DPI scaling. Setup is non-resizable; Settings is resizable.
 
+On Linux, use an Xorg/X11 session. If no tray host is available, Settings opens on
+every launch and closing the last window exits. GNOME may need an AppIndicator
+extension to provide the background tray behavior. See [Linux integration](configuration.md#linux-startup-and-tray).
+
 ## Providers
 
 | Provider | Base URL | Model |
@@ -31,11 +35,20 @@ See the [default shortcuts](../README.md#default-shortcuts). Change them in **Tr
 
 Save to activate changes. All four shortcuts must be distinct. If a new shortcut is already reserved, the previous shortcuts remain active. **Shortcuts enabled** in the tray menu toggles all four together.
 
+Recording a combination already assigned to another Emendia action transfers it
+to the action being edited and shows a warning. The previous action becomes
+**Unassigned**: choose a replacement before saving. This also works for active
+global shortcuts and repeated transfers within the same unsaved form. Changes
+take effect together on Save; closing without saving keeps the active bindings.
+
 After pressing a shortcut, release its keys. New shortcuts are ignored during capture and quick processing. When a preview is already open, any of the four shortcuts brings it to the foreground.
 
 ## Preview
 
 The capture popup appears first, then the preview takes over. Change translation languages or proofreading style, edit the result directly, or request a **New suggestion**. Language and style changes apply only to that session.
+
+On Linux, previews use a movable native window frame. Drag the title bar to move
+them; the transient capture/status popup remains non-activating.
 
 - **Replace** returns to the original selection and attempts to paste the result.
 - **Copy** puts the result on the clipboard for manual pasting.
@@ -65,8 +78,8 @@ All styles ask the model to preserve meaning, paragraphs and formatting without 
 
 ## Appearance, language and startup
 
-In **General**, select **Light / Dark / System** and **System / English / Français**. Both take effect immediately and are saved independently of other form edits. System theme follows Windows appearance changes; System language uses French when the Windows UI language is French, and English otherwise. Interface language does not affect translation targets or proofreading results.
+In **General**, select **Light / Dark / System** and **System / English / Français**. Both take effect immediately and are saved independently of other form edits. System theme follows desktop appearance changes. System language uses the Windows UI language or Linux locale: French for a French system, English otherwise. Interface language does not affect translation targets or proofreading results.
 
-Enable **Launch at Windows startup** and save to start Emendia in the tray at sign-in for the current user, without administrator rights. It is disabled by default. After moving the executable, save again from its new location. Use a release build to avoid a console window.
+Enable **Launch at sign-in** and save to start Emendia at sign-in for the current user, without administrator rights. It is disabled by default. After moving the executable, save again from its new location. On Windows, use a release build to avoid a console window.
 
 Closing every window leaves Emendia running in the tray. Choose **Quit** in the tray menu to exit.

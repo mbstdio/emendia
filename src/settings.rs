@@ -251,7 +251,7 @@ pub struct SettingsStore {
 impl SettingsStore {
     pub fn new() -> Result<Self> {
         let dirs = ProjectDirs::from("dev", "Emendia", "Emendia")
-            .context(t("Unable to find the Windows configuration directory"))?;
+            .context(t("Unable to find the configuration directory"))?;
         Ok(Self {
             path: dirs.config_dir().join("settings.json"),
             legacy_path: ProjectDirs::from("dev", "TranslationTool", "TranslationTool")
@@ -330,7 +330,7 @@ impl SettingsStore {
 // Use a separate credential per endpoint, so switching providers cannot reuse an OpenAI key.
 fn credential(base_url: &str) -> Result<keyring::Entry> {
     keyring::Entry::new("emendia", normalize_endpoint(base_url))
-        .context(t("Unable to access Windows Credential Manager"))
+        .context(t("Unable to access the system keyring"))
 }
 
 pub fn normalize_endpoint(base_url: &str) -> &str {

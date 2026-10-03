@@ -1,9 +1,8 @@
-use crate::{platform::windows, settings::ThemePreference};
+use crate::settings::ThemePreference;
 use gpui_kit::{
     component::{ActiveTheme, Theme, ThemeMode},
     *,
 };
-use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 impl Global for ThemePreference {}
 
@@ -20,7 +19,16 @@ pub fn apply(preference: ThemePreference, cx: &mut App) {
 }
 
 pub fn configure_window(window: &mut Window, cx: &mut App) {
-    // Read Windows' appearance when opening a window, including after time in the tray.
+    #[cfg(target_os = "linux")]
+    {
+        window.set_app_id("emendia");
+        if let Err(error) = crate::platform::desktop::native_window(window)
+            .and_then(crate::platform::linux::x11::set_window_icon)
+        {
+            tracing::warn!(%error, "Unable to set the application window icon");
+        }
+    }
+    // Read desktop appearance when opening a window, including after time in the tray.
     sync_system(window, cx);
     update_titlebar(window, cx);
     window
@@ -46,10 +54,13 @@ fn sync_system(window: &mut Window, cx: &mut App) {
 }
 
 fn update_titlebar(window: &mut Window, cx: &mut App) {
-    if let Ok(handle) = HasWindowHandle::window_handle(window)
-        && let RawWindowHandle::Win32(handle) = handle.as_raw()
-        && let Err(error) = windows::set_dark_titlebar(handle.hwnd.get(), cx.theme().mode.is_dark())
+    #[cfg(target_os = "windows")]
+    if let Ok(handle) = crate::platform::desktop::native_window(window)
+        && let Err(error) =
+            crate::platform::windows::set_dark_titlebar(handle, cx.theme().mode.is_dark())
     {
         tracing::debug!(%error, "Unable to apply the title bar theme");
     }
+    #[cfg(not(target_os = "windows"))]
+    let _ = (window, cx);
 }

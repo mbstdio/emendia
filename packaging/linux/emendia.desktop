@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Emendia
+Comment=Contextual translation and proofreading
+Comment[fr]=Traduction et correction contextuelles
+Exec=emendia --settings
+Icon=emendia
+Terminal=false
+Categories=Office;
+StartupWMClass=emendia

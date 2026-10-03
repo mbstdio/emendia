@@ -1,7 +1,7 @@
 use crate::i18n::{canonical_language, t};
 use crate::{
     app::Controller,
-    platform::windows::{self, Selection},
+    platform::desktop::{self, Selection},
     settings::{self, CorrectionStyle, Operation, Settings},
     translation::Translator,
     ui::{LanguageSelect, language_select, style_buttons},
@@ -38,6 +38,8 @@ pub struct Preview {
     request_version: u64,
     pending: Option<AbortHandle>,
     smoke_layout: Option<Rc<RefCell<Vec<Bounds<Pixels>>>>>,
+    #[cfg(target_os = "linux")]
+    smoke_native_window: Option<isize>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -52,8 +54,14 @@ impl Preview {
         cx.notify();
     }
 
-    pub(crate) fn enable_smoke_layout(&mut self) {
+    pub(crate) fn enable_smoke_layout(&mut self, window: &Window) {
         self.smoke_layout = Some(Rc::new(RefCell::new(Vec::new())));
+        #[cfg(target_os = "linux")]
+        {
+            self.smoke_native_window = desktop::native_window(window).ok();
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = window;
     }
 
     pub fn set_result(
@@ -75,6 +83,17 @@ impl Preview {
             Operation::Correction => "Bonjour, ceci est un test de correction.",
         };
         if !self.busy && self.translation.read(cx).value() == expected {
+            #[cfg(target_os = "linux")]
+            if let Some(window) = self.smoke_native_window {
+                assert!(
+                    crate::platform::linux::x11::smoke_window_has_icon(window),
+                    "The preview must expose the fixed app logo to the X11 taskbar"
+                );
+                assert!(
+                    crate::platform::linux::x11::smoke_preview_is_movable(window),
+                    "The preview must be a movable managed window, not a notification"
+                );
+            }
             if let Some(layout) = &self.smoke_layout {
                 let bounds = layout.borrow();
                 let Some(header) = bounds.first() else {
@@ -163,6 +182,8 @@ impl Preview {
             request_version: 0,
             pending: None,
             smoke_layout: None,
+            #[cfg(target_os = "linux")]
+            smoke_native_window: None,
             _subscriptions: subscriptions,
         }
     }
@@ -252,7 +273,7 @@ impl Preview {
         self.status = t("Replacing in the original window…").into();
         let task = self
             .runtime
-            .spawn_blocking(move || windows::replace(&selection, &text));
+            .spawn_blocking(move || desktop::replace(&selection, &text));
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -280,7 +301,7 @@ impl Preview {
         self.copying = true;
         let task = self
             .runtime
-            .spawn_blocking(move || windows::copy_text(&text));
+            .spawn_blocking(move || desktop::copy_text(&text));
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
             let _ = this.update_in(cx, |this, _, cx| {

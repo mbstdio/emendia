@@ -1,43 +1,86 @@
-use crate::i18n::t;
 use anyhow::Result;
-use tray_icon::{
-    Icon, TrayIcon, TrayIconBuilder,
-    menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
-};
+use tray_icon::menu::MenuId;
+
+#[cfg(target_os = "windows")]
+#[path = "windows/tray.rs"]
+mod backend;
+#[cfg(target_os = "linux")]
+#[path = "linux/tray.rs"]
+mod backend;
 
 pub struct Tray {
-    _icon: TrayIcon,
-    pub settings: MenuItem,
-    pub enabled: CheckMenuItem,
-    pub quit: MenuItem,
+    inner: backend::Tray,
+    dark_system: bool,
 }
 
 impl Tray {
-    pub fn new() -> Result<Self> {
-        let menu = Menu::new();
-        let settings = MenuItem::new(t("Settings"), true, None);
-        let enabled = CheckMenuItem::new(t("Shortcuts enabled"), true, true, None);
-        let quit = MenuItem::new(t("Quit"), true, None);
-        menu.append_items(&[&settings, &enabled, &PredefinedMenuItem::separator(), &quit])?;
-        let icon = TrayIconBuilder::new()
-            .with_tooltip(t("Emendia — translation and proofreading"))
-            .with_icon(Icon::from_resource(1, None)?)
-            .with_menu(Box::new(menu))
-            .build()?;
+    pub fn new(dark_system: bool) -> Result<Self> {
         Ok(Self {
-            _icon: icon,
-            settings,
-            enabled,
-            quit,
+            inner: backend::Tray::new(super::icons::tray_icon(dark_system)?)?,
+            dark_system,
         })
     }
 
+    pub fn settings_id(&self) -> &MenuId {
+        #[cfg(target_os = "windows")]
+        {
+            self.inner.settings.id()
+        }
+        #[cfg(target_os = "linux")]
+        {
+            &self.inner.settings
+        }
+    }
+
+    pub fn enabled_id(&self) -> &MenuId {
+        #[cfg(target_os = "windows")]
+        {
+            self.inner.enabled.id()
+        }
+        #[cfg(target_os = "linux")]
+        {
+            &self.inner.enabled
+        }
+    }
+
+    pub fn quit_id(&self) -> &MenuId {
+        #[cfg(target_os = "windows")]
+        {
+            self.inner.quit.id()
+        }
+        #[cfg(target_os = "linux")]
+        {
+            &self.inner.quit
+        }
+    }
+
+    pub fn set_enabled(&self, enabled: bool) {
+        #[cfg(target_os = "windows")]
+        self.inner.enabled.set_checked(enabled);
+        #[cfg(target_os = "linux")]
+        self.inner.set_enabled(enabled);
+    }
+
+    pub fn available(&self) -> bool {
+        #[cfg(target_os = "windows")]
+        {
+            true
+        }
+        #[cfg(target_os = "linux")]
+        {
+            self.inner.available()
+        }
+    }
+
     pub fn localize(&self) {
-        self.settings.set_text(t("Settings"));
-        self.enabled.set_text(t("Shortcuts enabled"));
-        self.quit.set_text(t("Quit"));
-        let _ = self
-            ._icon
-            .set_tooltip(Some(t("Emendia — translation and proofreading")));
+        self.inner.localize();
+    }
+
+    pub fn set_system_theme(&mut self, dark_system: bool) -> Result<()> {
+        if self.dark_system != dark_system {
+            self.inner.set_icon(super::icons::tray_icon(dark_system)?)?;
+            self.dark_system = dark_system;
+        }
+        Ok(())
     }
 }

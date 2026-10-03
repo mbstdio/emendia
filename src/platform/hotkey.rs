@@ -1,8 +1,20 @@
+#[cfg(target_os = "linux")]
+use super::linux::hotkey::Manager as GlobalHotKeyManager;
 use anyhow::{Context, Result, bail};
-use global_hotkey::{
-    GlobalHotKeyManager,
-    hotkey::{HotKey, Modifiers},
-};
+#[cfg(not(target_os = "linux"))]
+use global_hotkey::GlobalHotKeyManager;
+use global_hotkey::hotkey::{HotKey, Modifiers};
+
+pub(crate) fn next_event() -> Option<global_hotkey::GlobalHotKeyEvent> {
+    #[cfg(target_os = "linux")]
+    {
+        super::linux::hotkey::next_event()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        global_hotkey::GlobalHotKeyEvent::receiver().try_recv().ok()
+    }
+}
 
 pub fn parse(value: &str) -> Result<HotKey> {
     let hotkey: HotKey = value
@@ -13,7 +25,7 @@ pub fn parse(value: &str) -> Result<HotKey> {
         .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER)
     {
         bail!(crate::i18n::t(
-            "The shortcut must include Ctrl, Alt or Win."
+            "The shortcut must include Ctrl, Alt or Super/Win."
         ));
     }
     Ok(hotkey)
@@ -30,6 +42,11 @@ pub fn parse_pair(preview: &str, quick: &str) -> Result<[HotKey; 2]> {
 }
 
 pub fn parse_shortcuts(values: [&str; 4]) -> Result<[HotKey; 4]> {
+    if values.iter().any(|value| value.trim().is_empty()) {
+        bail!(crate::i18n::t(
+            "Assign a shortcut to every action before saving."
+        ));
+    }
     let keys = [
         parse(values[0])?,
         parse(values[1])?,
@@ -44,7 +61,7 @@ pub fn parse_shortcuts(values: [&str; 4]) -> Result<[HotKey; 4]> {
     Ok(keys)
 }
 
-// This object lives on GPUI's main thread, which owns the Win32 message loop.
+// Lives on GPUI's main thread; Windows registration uses its Win32 message loop.
 pub struct HotkeyRegistration {
     manager: GlobalHotKeyManager,
     hotkeys: Option<[HotKey; 4]>,
@@ -60,6 +77,31 @@ pub enum TranslationMode {
 }
 
 impl TranslationMode {
+    pub const ALL: [Self; 4] = [
+        Self::Preview,
+        Self::Quick,
+        Self::CorrectionPreview,
+        Self::CorrectionQuick,
+    ];
+
+    pub fn index(self) -> usize {
+        match self {
+            Self::Preview => 0,
+            Self::Quick => 1,
+            Self::CorrectionPreview => 2,
+            Self::CorrectionQuick => 3,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        crate::i18n::t(match self {
+            Self::Preview => "Translate with preview",
+            Self::Quick => "Quick Translate",
+            Self::CorrectionPreview => "Proofread with preview",
+            Self::CorrectionQuick => "Quick Check",
+        })
+    }
+
     pub fn operation(self) -> crate::settings::Operation {
         match self {
             Self::Preview | Self::Quick => crate::settings::Operation::Translation,
@@ -101,7 +143,11 @@ impl HotkeyRegistration {
                     "Shortcut already used by another application",
                 ))
             },
-            |key| self.manager.unregister(key).map_err(Into::into),
+            |key| {
+                self.manager
+                    .unregister(key)
+                    .context(crate::i18n::t("Unable to release shortcut"))
+            },
             persist,
         )?;
         self.hotkeys = Some(next);
@@ -112,8 +158,16 @@ impl HotkeyRegistration {
         update_registration(
             &mut self.registered,
             &[],
-            |key| self.manager.register(key).map_err(Into::into),
-            |key| self.manager.unregister(key).map_err(Into::into),
+            |key| {
+                self.manager.register(key).context(crate::i18n::t(
+                    "Shortcut already used by another application",
+                ))
+            },
+            |key| {
+                self.manager
+                    .unregister(key)
+                    .context(crate::i18n::t("Unable to release shortcut"))
+            },
             || Ok(()),
         )?;
         self.hotkeys = None;

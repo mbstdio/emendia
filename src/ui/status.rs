@@ -1,6 +1,6 @@
 use crate::i18n::t;
-use crate::{app::Controller, platform::windows, settings::Operation};
-use anyhow::{Result, bail};
+use crate::{app::Controller, platform::desktop, settings::Operation};
+use anyhow::Result;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
@@ -10,7 +10,6 @@ use gpui_kit::{
     },
     *,
 };
-use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
@@ -24,16 +23,16 @@ pub struct StatusView {
     controller: WeakEntity<Controller>,
     layout: Rc<RefCell<Vec<Bounds<Pixels>>>>,
     viewport: Rc<Cell<gpui_kit::Size<Pixels>>>,
-    placement: windows::Placement,
+    placement: desktop::Placement,
     height: Rc<Cell<f32>>,
-    requested_placement: Rc<Cell<windows::Placement>>,
+    requested_placement: Rc<Cell<desktop::Placement>>,
 }
 
 impl StatusView {
     pub fn new(
         operation: Operation,
         controller: WeakEntity<Controller>,
-        placement: windows::Placement,
+        placement: desktop::Placement,
     ) -> Self {
         Self {
             message: t("Capturing text… Release the shortcut keys.").into(),
@@ -55,20 +54,17 @@ impl StatusView {
 
     fn schedule_placement(
         window: &Window,
-        placement: Rc<Cell<windows::Placement>>,
+        placement: Rc<Cell<desktop::Placement>>,
         cx: &App,
     ) -> Result<()> {
-        let handle = HasWindowHandle::window_handle(window)
-            .map_err(|error| anyhow::anyhow!("Unable to access the status window: {error}"))?;
-        let RawWindowHandle::Win32(handle) = handle.as_raw() else {
-            bail!("Expected a Windows window")
-        };
-        let hwnd = handle.hwnd.get();
-        // Native resizing emits synchronous WM_SIZE callbacks into GPUI. Execute
-        // outside a Window/App update so GPUI can update its viewport and renderer.
+        let handle = desktop::native_window(window)?;
+        let scale = window.scale_factor();
+        // Run outside a Window/App update; native resizing can re-enter GPUI.
         cx.foreground_executor()
             .spawn(async move {
-                if let Err(error) = windows::show_status_without_activation(hwnd, placement.get()) {
+                if let Err(error) =
+                    desktop::show_status_without_activation(handle, placement.get(), scale)
+                {
                     tracing::error!(%error, "Unable to show the status window");
                 }
             })
@@ -76,13 +72,10 @@ impl StatusView {
         Ok(())
     }
 
-    pub(crate) fn smoke_nonactivating(window: &Window, placement: windows::Placement) -> bool {
-        HasWindowHandle::window_handle(window).is_ok_and(|handle| match handle.as_raw() {
-            RawWindowHandle::Win32(handle) => {
-                windows::status_is_nonactivating(handle.hwnd.get())
-                    && windows::status_has_expected_bounds(handle.hwnd.get(), placement)
-            }
-            _ => false,
+    pub(crate) fn smoke_nonactivating(window: &Window, placement: desktop::Placement) -> bool {
+        desktop::native_window(window).is_ok_and(|handle| {
+            desktop::status_is_nonactivating(handle)
+                && desktop::status_has_expected_bounds(handle, placement, window.scale_factor())
         })
     }
 
@@ -109,8 +102,8 @@ impl StatusView {
         );
     }
 
-    pub(crate) fn smoke_placement(&self) -> windows::Placement {
-        windows::Placement {
+    pub(crate) fn smoke_placement(&self) -> desktop::Placement {
+        desktop::Placement {
             y: self.placement.y + self.placement.height - self.height.get(),
             height: self.height.get(),
             ..self.placement
@@ -144,7 +137,7 @@ impl Render for StatusView {
                     viewport.set(window.viewport_size());
                     if (height.get() - content_height).abs() >= 1. {
                         height.set(content_height);
-                        let resized = windows::Placement {
+                        let resized = desktop::Placement {
                             y: placement.y + placement.height - content_height,
                             height: content_height,
                             ..placement

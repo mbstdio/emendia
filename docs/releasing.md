@@ -4,11 +4,12 @@
 
 ## Distributions
 
-Each Windows x64 release contains three assets:
+Each release contains Windows and Linux x64 distributions:
 
 ```text
 Emendia-v0.2.0-windows-x64.exe
 Emendia-v0.2.0-windows-x64-setup.exe
+Emendia-v0.2.0-linux-x64.tar.gz
 SHA256SUMS.txt
 ```
 
@@ -17,6 +18,11 @@ The portable download is the executable itself, not an archive. It does not requ
 The Inno Setup installer installs the same executable as `emendia.exe` in `%LOCALAPPDATA%\Programs\Emendia`, without administrator rights. It creates a Start Menu shortcut, offers an optional desktop shortcut and registers an uninstaller. Its interface supports English and French.
 
 Both distributions require Windows 10 version 1903 or newer (x64) and graphics drivers compatible with GPUI. Release builds statically link the Visual C++ runtime so users do not need a separate redistributable or accompanying DLLs. The executables and installer are currently unsigned.
+
+The Linux archive is built on Ubuntu 24.04 x64 (glibc 2.39 or newer). It includes
+the executable, license, PNG icon, `.desktop` launcher and installation guide.
+It requires an X11 login session and the native runtime libraries listed in the
+[Linux distribution guide](../packaging/linux/README.md); it is not a static binary.
 
 ## Publish a release
 
@@ -47,7 +53,8 @@ The current package version is `0.2.0`, so use `v0.2.0`. Ensure the tag includes
 7. Verify the absence of external CRT dependencies, generate SHA-256 checksums and save the distributions as Actions artifacts for 14 days.
 8. Generate English release notes with git-cliff 2.14.2 for the checked-out tag.
 9. Verify installation/update/uninstall on a clean GitHub-hosted `windows-2022` machine using the exact built files and the test script from the built commit.
-10. After both jobs succeed, create or resume a draft in a GitHub-hosted Ubuntu publication job, upload all three assets, then publish.
+10. In parallel, build Linux on `ubuntu-24.04`, run formatting/Clippy/tests and X11 integration/graphical diagnostics under Xvfb/Openbox, then package the `.tar.gz` archive.
+11. After Windows build, installer verification and Linux build succeed, create or resume a draft, combine Windows/Linux SHA-256 entries, upload all four assets, then publish.
 
 The publication job uses GitHub's automatic token with `contents: write`. No personal access token or additional secret is needed. GitHub Actions must be enabled and repository or organization policies must allow these actions and release publication.
 
@@ -90,7 +97,7 @@ Once the workflow is on the default branch:
 3. Optionally enter a branch, tag or commit in **ref** to build that revision instead.
 4. Run the workflow and download its **Artifacts** after it succeeds.
 
-Manual builds run the same checks and produce both distributions and checksums, but never publish a release, even when building a tag. Their filenames contain the package version, `dev` and the short commit ID, for example `Emendia-v0.2.0-dev-a1b2c3d4-windows-x64.exe`.
+Manual builds run the same checks and produce Windows and Linux distributions and checksums, but never publish a release, even when building a tag. Their filenames contain the package version, `dev` and the short commit ID, for example `Emendia-v0.2.0-dev-a1b2c3d4-windows-x64.exe`. Linux artifacts include `SHA256SUMS-linux.txt`; published releases combine its entries into the shared `SHA256SUMS.txt`.
 
 GitHub packages Actions artifacts in a ZIP for download. This is only the test-build transport; the portable asset on a published release is a direct `.exe` download.
 
@@ -128,7 +135,13 @@ Uninstall removes the `Emendia` startup registry entry only when it points to th
 
 ## Local packaging and validation
 
-The executable, window/taskbar icons, notification-area icon, installer and uninstaller use `src/ressources/app-logo.ico`, generated from `app-logo.jpg` with sizes from 16 to 256 pixels. When changing the logo, regenerate the ICO before building; the build script embeds it as Windows resource 1. Shortcuts and the installed-apps entry use the executable's icon.
+The Windows executable, native window/taskbar resources, installer and uninstaller use `src/ressources/app-logo.ico`, with sizes from 16 to 256 pixels. When changing that logo, regenerate the ICO before building; the build script embeds it as Windows resource 1. Shortcuts and the installed-apps entry use the executable's icon.
+
+The tray embeds `src/ressources/app-logo-light.png` and `app-logo-dark.png` for
+the matching system themes on Windows and Linux. Linux window/taskbar icons
+always use the light PNG as the base logo. The Linux archive installs that same
+asset as `emendia.png` for the `.desktop` launcher; the executable also publishes
+it through X11 without requiring launcher installation.
 
 Install Inno Setup 6.7.3 and make `ISCC.exe` available in `PATH`. From PowerShell at the repository root:
 
@@ -159,3 +172,18 @@ Before the first public release, use a manual build and validate on a clean Wind
 Interactive desktop/clipboard tests from the [development guide](development.md#verification) remain manual checks; they are not enabled on hosted CI runners.
 
 `packaging/windows/test-installer.ps1` automates binary identity, repeated installation, locked-file guards and startup cleanup checks in CI. It installs into a temporary directory and refuses to run if the user profile already has an Emendia installation, Start Menu shortcut or startup entry. Run it only on a disposable profile.
+
+### Local Linux packaging
+
+```sh
+cargo build --release --locked
+EMENDIA_BINARY=target/release/emendia bash packaging/linux/test-x11.sh
+bash packaging/linux/package.sh v0.2.0
+sha256sum target/dist/Emendia-v0.2.0-linux-x64.tar.gz
+```
+
+`desktop-file-utils` is required to validate the launcher. The archive is written
+to `target/dist`. Test it on a clean Ubuntu 24.04 X11 desktop, especially tray
+integration, keyring persistence and autostart, before publishing the first Linux
+release. The workflow checks linked dependencies with `ldd` and waits for all
+platform verification jobs before publication.

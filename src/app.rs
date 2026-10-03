@@ -1,19 +1,18 @@
 use crate::i18n::{UiLanguage, t};
 use crate::{
     platform::{
+        desktop::{self, Selection},
         hotkey::{HotkeyRegistration, TranslationMode},
         startup,
         tray::Tray,
-        windows::{self, Selection},
     },
     settings::{self, Operation, Settings, SettingsStore, ThemePreference},
     translation::Translator,
     ui::{preview::Preview, settings::SettingsView, status::StatusView},
 };
 use anyhow::{Context as _, Result};
-use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
+use global_hotkey::HotKeyState;
 use gpui_kit::*;
-use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::time::Duration;
 use tokio::runtime::Runtime;
 use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent, menu::MenuEvent};
@@ -33,6 +32,59 @@ pub struct Controller {
 }
 
 impl Controller {
+    #[cfg(target_os = "linux")]
+    pub fn open_shortcut_smoke(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            for source in TranslationMode::ALL {
+                for target in TranslationMode::ALL {
+                    if source == target { continue; }
+                    let saved = this.update(cx, |this, cx| {
+                        let mut values = Settings::default().shortcuts().map(str::to_owned);
+                        values[source.index()] = "Ctrl+KeyM".into();
+                        let next = Settings {
+                            hotkey: values[0].clone(), quick_hotkey: values[1].clone(),
+                            correction_hotkey: values[2].clone(), quick_correction_hotkey: values[3].clone(),
+                            ..this.settings.clone()
+                        };
+                        this.hotkey.change(next.shortcuts()).expect("Register smoke shortcuts");
+                        this.settings = next.clone();
+                        let (window, view) = this.settings_window.as_ref().expect("Settings must be open");
+                        window.update(cx, |_, window, cx| {
+                            window.activate_window();
+                            view.update(cx, |view, cx| view.smoke_begin_shortcut_recording(&next, target, window, cx)).unwrap();
+                        }).unwrap();
+                        next
+                    }).unwrap();
+                    cx.background_executor().timer(Duration::from_millis(150)).await;
+                    cx.background_executor().spawn(async {
+                        crate::platform::linux::x11::smoke_send_shortcut()
+                    }).await.expect("Send registered Ctrl+M through XTest");
+                    let mut recorded = false;
+                    for _ in 0..80 {
+                        cx.background_executor().timer(Duration::from_millis(25)).await;
+                        recorded = this.update(cx, |this, cx| {
+                            this.settings_window.as_ref().unwrap().1.read_with(cx, |view, _| view.smoke_shortcut_recorded()).unwrap()
+                        }).unwrap();
+                        if recorded { break; }
+                    }
+                    assert!(recorded, "The registered Ctrl+M must reach the active shortcut recorder");
+                    this.update(cx, |this, cx| {
+                        assert!(this.preview_window.is_none(), "Recording must not launch an action");
+                        assert!(this.status_window.is_none(), "Recording must not open a capture error");
+                        assert_eq!(this.settings.shortcuts(), saved.shortcuts(), "Draft changes must not change active bindings before Save");
+                        this.settings_window.as_ref().unwrap().1.update(cx, |view, cx| {
+                            view.smoke_verify_shortcut_reassignment(&saved, source, target, cx);
+                        }).unwrap();
+                    }).unwrap();
+                }
+            }
+            cx.update(|cx| {
+                tracing::info!("X11 shortcut smoke test: all 12 action transfers, registered-key capture and unsaved reverse transfers verified");
+                cx.quit();
+            });
+        }).detach();
+    }
+
     pub fn open_smoke(
         &mut self,
         operation: Operation,
@@ -41,11 +93,11 @@ impl Controller {
     ) -> Result<()> {
         self.smoke_layout_check = true;
         let selection = Selection::smoke_fixture()?;
-        let foreground = windows::foreground_window();
-        let placement = windows::status_placement_for_window(foreground)?;
+        let foreground = desktop::foreground_window();
+        let placement = desktop::status_placement_for_window(foreground)?;
         self.open_status(placement, operation, cx)?;
         assert_eq!(
-            windows::foreground_window(),
+            desktop::foreground_window(),
             foreground,
             "The status window must not take focus"
         );
@@ -55,7 +107,7 @@ impl Controller {
                 .await;
             this.update(cx, |this, cx| {
                 assert_eq!(
-                    windows::foreground_window(),
+                    desktop::foreground_window(),
                     foreground,
                     "Deferred display must preserve focus"
                 );
@@ -137,6 +189,7 @@ impl Controller {
         store: SettingsStore,
         runtime: Runtime,
         translator: Translator,
+        system_appearance: WindowAppearance,
     ) -> Result<Self> {
         Ok(Self {
             settings,
@@ -144,7 +197,7 @@ impl Controller {
             runtime,
             translator,
             hotkey: HotkeyRegistration::new()?,
-            tray: Tray::new()?,
+            tray: Tray::new(crate::platform::icons::system_is_dark(system_appearance))?,
             settings_window: None,
             preview_window: None,
             status_window: None,
@@ -159,6 +212,10 @@ impl Controller {
         initial_error: Option<String>,
         cx: &mut Context<Self>,
     ) {
+        #[cfg(target_os = "linux")]
+        if let Err(error) = crate::platform::linux::x11::configure_display(cx) {
+            tracing::warn!(%error, "Unable to synchronize the X11 display scale");
+        }
         crate::ui::theme::apply(self.settings.theme, cx);
         gpui_kit::component::set_locale(if t("Settings") == "Settings" {
             "en"
@@ -173,12 +230,14 @@ impl Controller {
             .map(|e| e.to_string())
             .or_else(|| self.settings.validate().err().map(|e| e.to_string()))
             .or(initial_error);
-        self.tray.enabled.set_checked(self.hotkey.enabled());
-        if first_run || error.is_some() {
+        self.tray.set_enabled(self.hotkey.enabled());
+        if !self.tray.available() {
+            cx.set_quit_mode(QuitMode::LastWindowClosed);
+        }
+        if first_run || error.is_some() || !self.tray.available() {
             self.open_settings(error, cx);
         }
-        // Tray and hotkey libraries post Win32 messages on this same thread. Drain their
-        // non-blocking receivers from GPUI; the timer also works with zero open windows.
+        // Drain desktop service events without blocking GPUI, even with no open windows.
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor()
@@ -193,12 +252,22 @@ impl Controller {
     }
 
     fn poll_events(&mut self, cx: &mut Context<Self>) {
+        // GPUI tracks the system appearance even while no windows are open.
+        // Deliberately do not use the application ThemePreference here.
+        if let Err(error) = self
+            .tray
+            .set_system_theme(crate::platform::icons::system_is_dark(
+                cx.window_appearance(),
+            ))
+        {
+            tracing::warn!(%error, "Unable to synchronize the tray icon with the system theme");
+        }
         while let Ok(event) = MenuEvent::receiver().try_recv() {
-            if event.id == *self.tray.quit.id() {
+            if event.id == *self.tray.quit_id() {
                 cx.quit();
-            } else if event.id == *self.tray.settings.id() {
+            } else if event.id == *self.tray.settings_id() {
                 self.open_settings(None, cx);
-            } else if event.id == *self.tray.enabled.id() {
+            } else if event.id == *self.tray.enabled_id() {
                 if !self.settings.onboarding_completed {
                     self.open_settings(None, cx);
                     continue;
@@ -208,7 +277,7 @@ impl Controller {
                 } else {
                     self.hotkey.change(self.settings.shortcuts())
                 };
-                self.tray.enabled.set_checked(self.hotkey.enabled());
+                self.tray.set_enabled(self.hotkey.enabled());
                 if let Err(error) = result {
                     self.open_settings(Some(error.to_string()), cx);
                 }
@@ -226,11 +295,30 @@ impl Controller {
                 self.open_settings(None, cx);
             }
         }
-        while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
+        while let Some(event) = crate::platform::hotkey::next_event() {
             if event.state == HotKeyState::Pressed
                 && let Some(mode) = self.hotkey.mode(event.id)
             {
-                self.capture(mode, cx);
+                let shortcut = self.settings.shortcuts()[mode.index()].to_owned();
+                // On X11 an active global grab prevents KeyDown reaching the form.
+                // Feed that combination to its recorder instead. Also consume the
+                // event if KeyDown already recorded it (notably on Windows).
+                let handled = self.settings_window.as_ref().is_some_and(|(handle, view)| {
+                    handle
+                        .update(cx, |_, window, cx| {
+                            if !window.is_window_active() {
+                                return false;
+                            }
+                            let _ = view.update(cx, |view, cx| {
+                                view.record_registered_shortcut(&shortcut, cx)
+                            });
+                            true
+                        })
+                        .unwrap_or(false)
+                });
+                if !handled {
+                    self.capture(mode, cx);
+                }
             }
         }
     }
@@ -252,10 +340,10 @@ impl Controller {
             }
             self.preview_window = None;
         }
-        let target = match windows::capture_target() {
+        let target = match desktop::capture_target() {
             Ok(target) => target,
             Err(error) => {
-                let status = windows::status_placement_for_window(windows::foreground_window())
+                let status = desktop::status_placement_for_window(desktop::foreground_window())
                     .and_then(|placement| self.open_status(placement, mode.operation(), cx));
                 if status.is_ok() {
                     self.set_status(format!("{}: {error}", t("Capture")), true, true, cx);
@@ -269,7 +357,7 @@ impl Controller {
         if mode.quick() {
             settings.correction_style = settings.quick_correction_style;
         }
-        let status = windows::status_placement(&target)
+        let status = desktop::status_placement(&target)
             .and_then(|placement| self.open_status(placement, mode.operation(), cx));
         if let Err(error) = status {
             self.open_settings(Some(format!("{}: {error}", t("Status window"))), cx);
@@ -294,7 +382,7 @@ impl Controller {
         self.session_active = true;
         let capture = self
             .runtime
-            .spawn_blocking(move || windows::capture(target));
+            .spawn_blocking(move || desktop::capture(target));
         cx.spawn(async move |this, cx| {
             let result = capture
                 .await
@@ -339,7 +427,7 @@ impl Controller {
 
     fn open_status(
         &mut self,
-        placement: windows::Placement,
+        placement: desktop::Placement,
         operation: Operation,
         cx: &mut Context<Self>,
     ) -> Result<()> {
@@ -438,7 +526,7 @@ impl Controller {
                     let replacement = this.update(cx, |this, cx| {
                         this.set_status(t("Replacing in the document…").into(), false, false, cx);
                         this.runtime
-                            .spawn_blocking(move || windows::replace_quick(&captured, &translated))
+                            .spawn_blocking(move || desktop::replace_quick(&captured, &translated))
                     });
                     let replacement = match replacement {
                         Ok(task) => task
@@ -499,7 +587,13 @@ impl Controller {
                 size(px(placement.width), px(placement.height)),
             ))),
             display_id: Some(DisplayId::new(placement.monitor)),
-            kind: WindowKind::PopUp,
+            // X11 PopUp is a notification: its window manager cannot decorate or
+            // drag it. Floating gives previews a normal movable native frame.
+            kind: if cfg!(target_os = "linux") {
+                WindowKind::Floating
+            } else {
+                WindowKind::PopUp
+            },
             titlebar: Some(TitlebarOptions {
                 title: Some(operation.title().into()),
                 ..Default::default()
@@ -534,7 +628,7 @@ impl Controller {
                     let _ = window.update(cx, |_, window, cx| {
                         preview.update(cx, |view, cx| {
                             if smoke_layout_check {
-                                view.enable_smoke_layout();
+                                view.enable_smoke_layout(window);
                             }
                             if let Some((text, error)) = result {
                                 view.set_result(text, error, window, cx);
@@ -575,7 +669,7 @@ impl Controller {
             .is_ok_and(|saved| saved.is_some_and(|settings| settings.validate().is_ok()));
         let controller = cx.entity().downgrade();
         // Use the launch/tray-click monitor for both placement and DPI conversion.
-        let display_id = windows::cursor_monitor()
+        let display_id = desktop::cursor_monitor()
             .ok()
             .map(DisplayId::new)
             .filter(|id| cx.find_display(*id).is_some());
@@ -585,7 +679,7 @@ impl Controller {
             display_id,
             is_resizable: !onboarding,
             titlebar: Some(TitlebarOptions {
-                appears_transparent: onboarding,
+                appears_transparent: onboarding && cfg!(target_os = "windows"),
                 title: Some(
                     t(if onboarding {
                         "Emendia — Welcome"
@@ -600,12 +694,11 @@ impl Controller {
             ..Default::default()
         };
         match gpui_kit::open_window(options, cx, |window, cx| {
-            // Windows can rescale the initial placement when creation crosses monitors.
-            // Apply the logical client size once the destination DPI is established.
-            if let Ok(handle) = HasWindowHandle::window_handle(window)
-                && let RawWindowHandle::Win32(handle) = handle.as_raw()
-                && let Err(error) = windows::center_window(
-                    handle.hwnd.get(),
+            // Apply the final logical size and center within the native monitor's
+            // usable area, rather than an entire multi-output X11 screen.
+            if let Ok(handle) = desktop::native_window(window)
+                && let Err(error) = desktop::center_window(
+                    handle,
                     window_bounds.size.width.as_f32(),
                     window_bounds.size.height.as_f32(),
                 )
@@ -624,7 +717,7 @@ impl Controller {
 
     pub fn smoke_onboarding_step(&mut self, step: usize, cx: &mut Context<Self>) {
         assert!(!self.settings.onboarding_completed);
-        let expected_display = windows::cursor_monitor().ok().map(DisplayId::new);
+        let expected_display = desktop::cursor_monitor().ok().map(DisplayId::new);
         self.open_settings(None, cx);
         let (handle, view) = self
             .settings_window
@@ -641,6 +734,12 @@ impl Controller {
                         "Setup must open on the cursor monitor, using that monitor's DPI"
                     );
                 }
+                #[cfg(target_os = "linux")]
+                assert!(
+                    desktop::native_window(window)
+                        .is_ok_and(crate::platform::linux::x11::smoke_window_has_icon),
+                    "Onboarding must expose the fixed app logo to the X11 taskbar"
+                );
                 view.update(cx, |view, cx| view.smoke_onboarding_step(step, cx))
                     .expect("Setup view must exist");
             })
@@ -673,7 +772,7 @@ impl Controller {
             })
         })?;
         self.settings = next;
-        self.tray.enabled.set_checked(true);
+        self.tray.set_enabled(true);
         Ok(())
     }
 

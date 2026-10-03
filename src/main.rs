@@ -1,4 +1,7 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![cfg_attr(
+    all(target_os = "windows", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
 
 use anyhow::Result;
 use emendia::{
@@ -27,7 +30,10 @@ fn main() {
 }
 
 fn run() -> Result<()> {
+    emendia::platform::initialize()?;
     let smoke_onboarding = std::env::args().any(|argument| argument == "--smoke-test-onboarding");
+    let smoke_shortcuts = cfg!(target_os = "linux")
+        && std::env::args().any(|argument| argument == "--smoke-test-shortcuts");
     let smoke_correction = std::env::args().any(|argument| {
         matches!(
             argument.as_str(),
@@ -41,9 +47,15 @@ fn run() -> Result<()> {
         )
     });
     let smoke_test = smoke_onboarding
+        || smoke_shortcuts
         || smoke_correction
         || smoke_quick
         || std::env::args().any(|argument| argument == "--smoke-test");
+    let show_settings = std::env::args().any(|argument| argument == "--settings");
+    if smoke_test {
+        // Graphical diagnostics must not depend on or access the user's keyring.
+        keyring::set_default_credential_builder(keyring::mock::default_credential_builder());
+    }
     let operation = if smoke_correction {
         Operation::Correction
     } else {
@@ -92,12 +104,16 @@ fn run() -> Result<()> {
         .run(move |cx| {
             gpui_kit::init(cx);
             cx.set_quit_mode(QuitMode::Explicit);
-            match Controller::new(settings, store, runtime, translator) {
+            match Controller::new(settings, store, runtime, translator, cx.window_appearance()) {
                 Ok(controller) => {
                     let controller = cx.new(|_| controller);
                 controller.update(cx, |controller, cx| {
-                    controller.start(first_run || smoke_test, error, cx);
-                       if smoke_test && !smoke_onboarding {
+                    controller.start(first_run || smoke_test || show_settings, error, cx);
+                       #[cfg(target_os = "linux")]
+                       if smoke_shortcuts {
+                           controller.open_shortcut_smoke(cx);
+                       }
+                       if smoke_test && !smoke_onboarding && !smoke_shortcuts {
                           // Let the initial Settings window finish its foreground activation
                           // before measuring focus preservation by the status popup.
                           cx.spawn(async move |controller, cx| {
@@ -128,7 +144,7 @@ fn run() -> Result<()> {
                             cx.background_executor().timer(std::time::Duration::from_secs(1)).await;
                             panic!("Closing incomplete onboarding must quit Emendia completely");
                         }).detach();
-                    } else if smoke_test {
+                    } else if smoke_test && !smoke_shortcuts {
                         cx.spawn(async move |cx| {
                             cx.background_executor()
                                 .timer(std::time::Duration::from_secs(3))
@@ -159,7 +175,7 @@ fn run() -> Result<()> {
                     }
                 }
                 Err(error) => {
-                    tracing::error!(%error, "Unable to initialize Windows integration");
+                    tracing::error!(%error, "Unable to initialize desktop integration");
                     cx.quit();
                 }
             }

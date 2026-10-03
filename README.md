@@ -4,7 +4,7 @@
 
 **Translate. Proofread. Refine.**
 
-Emendia is a native Windows application that translates and improves selected text in the application you are already using. Built with Rust and GPUI, it runs in the notification area and supports OpenAI, LM Studio, Ollama and other OpenAI-compatible providers.
+Emendia is a native Windows and Linux X11 application that translates and improves selected text in the application you are already using. Built with Rust and GPUI, it runs in the notification area and supports OpenAI, LM Studio, Ollama and other OpenAI-compatible providers.
 
 Select text → press a shortcut → review the suggestion → **Replace** or **Copy**.
 
@@ -19,7 +19,13 @@ Select text → press a shortcut → review the suggestion → **Replace** or **
 
 Click the tray icon to open Settings. Closing windows keeps Emendia running; choose **Quit** in the tray menu to exit.
 
-Release builds require Windows 10 version 1903 or newer (x64) and compatible graphics drivers. Both downloads use the same executable. Portable builds still store settings in your Windows user profile and API keys in Windows Credential Manager. `SHA256SUMS.txt` is available with each release to verify downloads.
+Windows release builds require Windows 10 version 1903 or newer (x64) and compatible graphics drivers. Both Windows downloads use the same executable. Portable builds still store settings in your Windows user profile and API keys in Windows Credential Manager. `SHA256SUMS.txt` is available with each release to verify downloads.
+
+### Linux x64 (X11)
+
+Download `Emendia-<version>-linux-x64.tar.gz` from Releases, extract it into a permanent directory, and run `./emendia`. Builds target Ubuntu 24.04 x64 (glibc 2.39 or newer) and require an **Xorg/X11 login session**. See the included README or [Linux distribution guide](packaging/linux/README.md) for runtime dependencies and launcher installation.
+
+API keys use Secret Service (GNOME Keyring or a compatible unlocked keyring). If the desktop has no tray host, Settings opens normally and closing the last window quits Emendia. Wayland sessions are not supported yet.
 
 ## Default shortcuts
 
@@ -35,7 +41,7 @@ Preview actions let you edit the result before replacing or copying it. Quick ac
 ## Good to know
 
 - Selected text is sent to your configured provider. Use a locally hosted model for local processing.
-- API keys are stored in Windows Credential Manager, separately from settings.
+- API keys are stored in the system keyring, separately from settings.
 - Replacement inserts plain text and may not work in every application. Use **Copy** for manual pasting when needed.
 - The interface supports English and French, with Light, Dark and System themes.
 
@@ -51,6 +57,17 @@ cargo build --release --locked
 
 Run `target/release/emendia.exe`. See the [development guide](docs/development.md) for setup details, troubleshooting and tests.
 
+## Building on Linux
+
+Install Rust **1.99 or newer** and the native dependencies listed in the [development guide](docs/development.md#linux-x11-build-environment), then:
+
+```sh
+cargo build --release --locked
+./target/release/emendia
+```
+
+Create the distribution with `bash packaging/linux/package.sh v0.2.0`. Desktop integration requires X11, XTest and XFixes.
+
 ## Documentation
 
 - [Usage](docs/usage.md): providers, previews, proofreading styles and preferences.
@@ -60,7 +77,8 @@ Run `target/release/emendia.exe`. See the [development guide](docs/development.m
 
 ## Roadmap
 
-- [ ] Linux build
+- [x] Linux X11 build
+- [ ] Linux Wayland support
 - [ ] Mac build? `¯\_(ツ)_/¯`
 - [ ] Better model selection
 - [ ] Overall interface improvements

@@ -21,7 +21,68 @@ use tokio::task::AbortHandle;
 
 const PROVIDERS: &[&str] = &["OpenAI", "LM Studio", "Ollama", "Custom"];
 const ONBOARDING_HERO_HEIGHT: f32 = 310.;
-const ONBOARDING_TITLE_BAR_HEIGHT: f32 = 34.;
+const ONBOARDING_TITLE_BAR_HEIGHT: f32 = if cfg!(target_os = "windows") { 34. } else { 0. };
+
+struct ShortcutReassignment {
+    shortcut: String,
+    target: TranslationMode,
+    displaced: Vec<TranslationMode>,
+}
+
+struct ShortcutDraft {
+    values: [String; 4],
+    reassignment: Option<ShortcutReassignment>,
+}
+
+impl ShortcutDraft {
+    fn new(settings: &Settings) -> Self {
+        Self {
+            values: settings.shortcuts().map(str::to_owned),
+            reassignment: None,
+        }
+    }
+
+    fn assign(&mut self, target: TranslationMode, candidate: String) -> Result<()> {
+        let key = hotkey::parse(&candidate)?;
+        let mut displaced = Vec::new();
+        for mode in TranslationMode::ALL {
+            if mode != target && hotkey::parse(&self.values[mode.index()]).ok() == Some(key) {
+                self.values[mode.index()].clear();
+                displaced.push(mode);
+            }
+        }
+        self.values[target.index()] = candidate.clone();
+        self.reassignment = (!displaced.is_empty()).then_some(ShortcutReassignment {
+            shortcut: candidate,
+            target,
+            displaced,
+        });
+        Ok(())
+    }
+
+    fn complete(&self) -> bool {
+        self.values.iter().all(|value| !value.trim().is_empty())
+    }
+
+    fn warning(&self) -> Option<String> {
+        if let Some(reassignment) = &self.reassignment {
+            let actions = reassignment
+                .displaced
+                .iter()
+                .map(|mode| mode.label())
+                .collect::<Vec<_>>()
+                .join(", ");
+            Some(t("Shortcut {shortcut} was already assigned to {actions}. It is now assigned to {target}. Reassign the actions without a shortcut before saving.")
+                .replace("{shortcut}", &reassignment.shortcut)
+                .replace("{actions}", &actions)
+                .replace("{target}", reassignment.target.label()))
+        } else if !self.complete() {
+            Some(t("Assign a shortcut to every action before saving.").to_owned())
+        } else {
+            None
+        }
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Category {
@@ -81,10 +142,7 @@ pub struct SettingsView {
     api_key: Entity<InputState>,
     source: LanguageSelect,
     target: LanguageSelect,
-    hotkey: String,
-    quick_hotkey: String,
-    correction_hotkey: String,
-    quick_correction_hotkey: String,
+    shortcuts: ShortcutDraft,
     style: CorrectionStyle,
     quick_style: CorrectionStyle,
     launch_at_startup: bool,
@@ -345,10 +403,7 @@ impl SettingsView {
             api_key,
             source,
             target,
-            hotkey: settings.hotkey,
-            quick_hotkey: settings.quick_hotkey,
-            correction_hotkey: settings.correction_hotkey,
-            quick_correction_hotkey: settings.quick_correction_hotkey,
+            shortcuts: ShortcutDraft::new(&settings),
             style,
             quick_style,
             launch_at_startup: settings.launch_at_startup,
@@ -421,10 +476,10 @@ impl SettingsView {
                 .selected_value()
                 .map(|value| canonical_language(value).to_owned())
                 .context(t("Choose the target language"))?,
-            hotkey: self.hotkey.clone(),
-            quick_hotkey: self.quick_hotkey.clone(),
-            correction_hotkey: self.correction_hotkey.clone(),
-            quick_correction_hotkey: self.quick_correction_hotkey.clone(),
+            hotkey: self.shortcuts.values[0].clone(),
+            quick_hotkey: self.shortcuts.values[1].clone(),
+            correction_hotkey: self.shortcuts.values[2].clone(),
+            quick_correction_hotkey: self.shortcuts.values[3].clone(),
             correction_style: self.style,
             quick_correction_style: self.quick_style,
             launch_at_startup: self.launch_at_startup,
@@ -534,7 +589,7 @@ impl SettingsView {
         {
             stroke.key.to_ascii_uppercase()
         } else {
-            self.status = t("Use a letter, digit or F1–F24 with Ctrl, Alt or Win.").into();
+            self.status = t("Use a letter, digit or F1–F24 with Ctrl, Alt or Super/Win.").into();
             cx.notify();
             return;
         };
@@ -553,20 +608,76 @@ impl SettingsView {
         }
         parts.push(key);
         let candidate = parts.join("+");
-        match hotkey::parse(&candidate) {
-            Ok(_) => {
-                match mode {
-                    TranslationMode::Preview => self.hotkey = candidate,
-                    TranslationMode::Quick => self.quick_hotkey = candidate,
-                    TranslationMode::CorrectionPreview => self.correction_hotkey = candidate,
-                    TranslationMode::CorrectionQuick => self.quick_correction_hotkey = candidate,
-                }
+        self.capture_shortcut(mode, candidate, cx);
+    }
+
+    fn capture_shortcut(
+        &mut self,
+        mode: TranslationMode,
+        candidate: String,
+        cx: &mut Context<Self>,
+    ) {
+        match self.shortcuts.assign(mode, candidate) {
+            Ok(()) => {
                 self.recording = None;
                 self.status = t("Shortcut captured. Save to activate it.").into();
             }
             Err(error) => self.status = error.to_string(),
         }
         cx.notify();
+    }
+
+    pub fn record_registered_shortcut(&mut self, shortcut: &str, cx: &mut Context<Self>) {
+        if let Some(mode) = self.recording {
+            self.capture_shortcut(mode, shortcut.to_owned(), cx);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn smoke_begin_shortcut_recording(
+        &mut self,
+        saved: &Settings,
+        target: TranslationMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.shortcuts = ShortcutDraft::new(saved);
+        self.category = Category::Shortcuts;
+        self.recording = Some(target);
+        self.focus.focus(window, cx);
+        cx.notify();
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn smoke_shortcut_recorded(&self) -> bool {
+        self.recording.is_none()
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn smoke_verify_shortcut_reassignment(
+        &mut self,
+        saved: &Settings,
+        source: TranslationMode,
+        target: TranslationMode,
+        cx: &mut Context<Self>,
+    ) {
+        assert_eq!(self.shortcuts.values[target.index()], "Ctrl+KeyM");
+        assert!(self.shortcuts.values[source.index()].is_empty());
+        assert!(self.shortcuts.warning().is_some());
+        assert!(!self.shortcuts.complete());
+        // Move the registered combination back without saving or reopening, then
+        // reassign the now-empty action and validate the final form.
+        self.recording = Some(source);
+        self.record_registered_shortcut("Ctrl+KeyM", cx);
+        assert!(self.shortcuts.values[target.index()].is_empty());
+        self.recording = Some(target);
+        self.record_registered_shortcut(saved.shortcuts()[target.index()], cx);
+        assert!(self.shortcuts.complete());
+        assert!(self.shortcuts.warning().is_none());
+        assert_eq!(
+            self.shortcuts.values.each_ref().map(String::as_str),
+            saved.shortcuts()
+        );
     }
 }
 
@@ -627,11 +738,11 @@ impl Render for SettingsView {
                 fields = fields
                     .child(section("Appearance", "The theme applies to every application window.", cx))
                     .child(field("Theme", Select::new(&self.theme).w_full()))
-                    .child(hint("Saved immediately. System follows the Windows theme.", cx))
+                    .child(hint("Saved immediately. System follows the desktop theme.", cx))
                     .child(field("Interface language", Select::new(&self.language).w_full()))
-                    .child(hint("Saved immediately. System uses French on French Windows, English otherwise.", cx))
+                    .child(hint("Saved immediately. System uses French for a French system locale, English otherwise.", cx))
                     .child(section("Startup", "Find the application in the notification area.", cx))
-                    .child(Checkbox::new("launch-at-startup").label(t("Launch at Windows startup")).checked(self.launch_at_startup)
+                    .child(Checkbox::new("launch-at-startup").label(t("Launch at sign-in")).checked(self.launch_at_startup)
                         .on_click(cx.listener(|this, checked, _, cx| { this.launch_at_startup = *checked; cx.notify(); })))
                     .child(hint("Save to apply this option. The application starts in the tray when you sign in.", cx))
                     .child(hint("Closing windows leaves the application in the tray. To exit: tray → Quit.", cx));
@@ -644,7 +755,7 @@ impl Render for SettingsView {
                     .child(field("Model", Input::new(&self.model)))
                     .child(field("API key", Input::new(&self.api_key).mask_toggle()))
                     .child(hint(
-                        "Stored in Windows Credential Manager. Optional for a local server.",
+                        "Stored in the system keyring. Optional for a local server.",
                         cx,
                     ))
                     .child(
@@ -768,6 +879,12 @@ impl Render for SettingsView {
                             .gap_3()
                             .border_t_1()
                             .border_color(cx.theme().border)
+                            .children(self.shortcuts.warning().map(|warning| {
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().warning)
+                                    .child(warning)
+                            }))
                             .child(
                                 div()
                                     .text_sm()
@@ -790,7 +907,10 @@ impl Render for SettingsView {
                                         Button::new("save")
                                             .primary()
                                             .label(t("Save"))
-                                            .disabled(self.recording.is_some())
+                                            .disabled(
+                                                self.recording.is_some()
+                                                    || !self.shortcuts.complete(),
+                                            )
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.save(cx);
                                             })),
@@ -989,15 +1109,15 @@ impl SettingsView {
                             .child(format!(
                                 "{}: {} · {} · {} · {}",
                                 t("Shortcuts"),
-                                self.hotkey,
-                                self.quick_hotkey,
-                                self.correction_hotkey,
-                                self.quick_correction_hotkey
+                                self.shortcuts.values[0],
+                                self.shortcuts.values[1],
+                                self.shortcuts.values[2],
+                                self.shortcuts.values[3]
                             )),
                     )
                     .child(
                         Checkbox::new("onboarding-startup")
-                            .label(t("Launch at Windows startup"))
+                            .label(t("Launch at sign-in"))
                             .checked(self.launch_at_startup)
                             .on_click(cx.listener(|this, checked, _, cx| {
                                 this.launch_at_startup = *checked;
@@ -1011,7 +1131,7 @@ impl SettingsView {
                             .p_4()
                             .rounded_lg()
                             .bg(cx.theme().secondary)
-                            .child(self.hotkey.clone()),
+                            .child(self.shortcuts.values[0].clone()),
                     )
                     .child(hint(
                         "Closing windows leaves the application in the tray. To exit: tray → Quit.",
@@ -1077,6 +1197,13 @@ impl SettingsView {
                     .text_center()
                     .child(crate::i18n::localize_message(&self.status)),
             )
+            .children(self.shortcuts.warning().map(|warning| {
+                div()
+                    .text_sm()
+                    .text_center()
+                    .text_color(cx.theme().warning)
+                    .child(warning)
+            }))
             .child(navigation)
             .child(dots);
         let mut root = v_flex()
@@ -1152,22 +1279,24 @@ impl SettingsView {
         )
         .child(footer)
         // Overlay the native window-control regions without reserving space above the hero.
-        .child(
-            div().absolute().top_0().left_0().w_full().child(
-                TitleBar::new()
-                    .h(px(ONBOARDING_TITLE_BAR_HEIGHT))
-                    .bg(transparent)
-                    .when(step == 0, |bar| {
-                        // Keep the controls legible over the photo in both themes.
-                        bar.bg(linear_gradient(
-                            90.,
-                            linear_color_stop(transparent, 0.78),
-                            linear_color_stop(background, 0.92),
-                        ))
-                    })
-                    .border_0(),
-            ),
-        )
+        .when(cfg!(target_os = "windows"), |root| {
+            root.child(
+                div().absolute().top_0().left_0().w_full().child(
+                    TitleBar::new()
+                        .h(px(ONBOARDING_TITLE_BAR_HEIGHT))
+                        .bg(transparent)
+                        .when(step == 0, |bar| {
+                            // Keep the controls legible over the photo in both themes.
+                            bar.bg(linear_gradient(
+                                90.,
+                                linear_color_stop(transparent, 0.78),
+                                linear_color_stop(background, 0.92),
+                            ))
+                        })
+                        .border_0(),
+                ),
+            )
+        })
     }
 
     fn localize(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1214,11 +1343,11 @@ impl SettingsView {
 
     fn shortcut(&self, mode: TranslationMode, cx: &mut Context<Self>) -> impl IntoElement {
         let (id, value) = match mode {
-            TranslationMode::Preview => ("record", &self.hotkey),
-            TranslationMode::Quick => ("record-quick", &self.quick_hotkey),
-            TranslationMode::CorrectionPreview => ("record-correction", &self.correction_hotkey),
+            TranslationMode::Preview => ("record", &self.shortcuts.values[0]),
+            TranslationMode::Quick => ("record-quick", &self.shortcuts.values[1]),
+            TranslationMode::CorrectionPreview => ("record-correction", &self.shortcuts.values[2]),
             TranslationMode::CorrectionQuick => {
-                ("record-quick-correction", &self.quick_correction_hotkey)
+                ("record-quick-correction", &self.shortcuts.values[3])
             }
         };
         h_flex()
@@ -1231,7 +1360,12 @@ impl SettingsView {
                     .rounded_md()
                     .bg(cx.theme().secondary)
                     .text_sm()
-                    .child(value.clone()),
+                    .when(value.is_empty(), |row| row.text_color(cx.theme().warning))
+                    .child(if value.is_empty() {
+                        t("Unassigned — choose a shortcut").to_owned()
+                    } else {
+                        value.clone()
+                    }),
             )
             .child(
                 Button::new(id)
@@ -1274,7 +1408,11 @@ fn section(title: &'static str, description: &'static str, cx: &App) -> impl Int
 
 #[cfg(test)]
 mod tests {
-    use super::Category;
+    use super::{Category, ShortcutDraft};
+    use crate::{
+        platform::hotkey::{self, TranslationMode},
+        settings::Settings,
+    };
     use gpui_kit::AssetSource;
 
     #[test]
@@ -1288,6 +1426,104 @@ mod tests {
                     .is_ok_and(|asset| asset.is_some()),
                 "Missing category icon: {path}"
             );
+        }
+    }
+
+    #[test]
+    fn shortcuts_can_move_between_every_pair_of_actions_without_saving() {
+        for source in TranslationMode::ALL {
+            for target in TranslationMode::ALL {
+                if source == target {
+                    continue;
+                }
+                let mut draft = ShortcutDraft::new(&Settings::default());
+                draft.assign(source, "Ctrl+KeyM".into()).unwrap();
+                draft.assign(target, "Ctrl+KeyM".into()).unwrap();
+                assert!(draft.values[source.index()].is_empty());
+                assert_eq!(draft.values[target.index()], "Ctrl+KeyM");
+                assert!(!draft.complete());
+                let reassignment = draft.reassignment.as_ref().unwrap();
+                assert_eq!(reassignment.displaced, [source]);
+                assert_eq!(reassignment.target, target);
+                assert!(draft.warning().is_some());
+                assert!(
+                    hotkey::parse_shortcuts(draft.values.each_ref().map(String::as_str)).is_err()
+                );
+                // Swap ownership back in the same unsaved form, then repair the
+                // displaced action and validate what will actually be persisted.
+                draft.assign(source, "Ctrl+KeyM".into()).unwrap();
+                assert!(draft.values[target.index()].is_empty());
+                draft.assign(target, "Ctrl+Alt+KeyN".into()).unwrap();
+                assert!(draft.complete());
+                assert!(draft.warning().is_none());
+                assert!(
+                    hotkey::parse_shortcuts(draft.values.each_ref().map(String::as_str)).is_ok()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn shortcut_aliases_invalid_input_and_same_action_are_handled_consistently() {
+        let mut draft = ShortcutDraft::new(&Settings::default());
+        draft
+            .assign(TranslationMode::Preview, "Ctrl+Alt+KeyM".into())
+            .unwrap();
+        draft
+            .assign(TranslationMode::Quick, "Alt+Control+KeyM".into())
+            .unwrap();
+        assert!(draft.values[0].is_empty());
+        let values = draft.values.clone();
+        assert!(
+            draft
+                .assign(TranslationMode::CorrectionQuick, "Shift+KeyM".into())
+                .is_err()
+        );
+        assert_eq!(
+            draft.values, values,
+            "Invalid input must not displace any action"
+        );
+        draft
+            .assign(TranslationMode::Quick, "Alt+Control+KeyM".into())
+            .unwrap();
+        assert_eq!(
+            draft.values, values,
+            "Recording the current value must not clear itself"
+        );
+        assert!(
+            draft.warning().is_some(),
+            "The unassigned action must still be indicated"
+        );
+    }
+
+    #[test]
+    fn repeated_moves_and_legacy_duplicates_clear_all_previous_owners() {
+        let mut draft = ShortcutDraft::new(&Settings::default());
+        draft.values = [
+            "Ctrl+KeyM".into(),
+            "Control+KeyM".into(),
+            "Ctrl+F11".into(),
+            "Ctrl+Shift+F11".into(),
+        ];
+        draft
+            .assign(TranslationMode::CorrectionPreview, "Ctrl+KeyM".into())
+            .unwrap();
+        assert!(draft.values[0].is_empty() && draft.values[1].is_empty());
+        assert_eq!(
+            draft.reassignment.as_ref().unwrap().displaced,
+            [TranslationMode::Preview, TranslationMode::Quick]
+        );
+        for target in TranslationMode::ALL.into_iter().cycle().take(12) {
+            draft.assign(target, "Ctrl+KeyM".into()).unwrap();
+            assert_eq!(
+                draft
+                    .values
+                    .iter()
+                    .filter(|value| value.as_str() == "Ctrl+KeyM")
+                    .count(),
+                1
+            );
+            assert_eq!(draft.values[target.index()], "Ctrl+KeyM");
         }
     }
 }
