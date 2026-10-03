@@ -1,4 +1,4 @@
-; Compile with ISCC /DAppVersion=0.1.0 /DBuildLabel=v0.1.0
+; Compile with ISCC /DAppVersion=0.2.0 /DBuildLabel=v0.2.0
 ; /DSourceExe=<absolute executable path> /DOutputDir=<absolute output directory>.
 #ifndef AppVersion
   #error AppVersion is required
