@@ -47,7 +47,7 @@ The workflow is `.github/workflows/release.yml`. **Pushing a version tag creates
 
 The tag must exactly match `v` followed by the Cargo package version. Supported versions are `MAJOR.MINOR.PATCH`, optionally followed by a SemVer prerelease suffix. Build metadata (`+...`) is not supported in release filenames.
 
-The current package version is `0.2.0`, so use `v0.2.0`. Ensure the tag includes the workflow and packaging configuration.
+The current package version is `0.3.0`, so use `v0.3.0`. Ensure the tag includes the workflow and packaging configuration.
 
 ### What happens automatically
 
@@ -155,7 +155,7 @@ Install Inno Setup 6.7.3 and make `ISCC.exe` available in `PATH`. From PowerShel
 ```powershell
 $env:RUSTFLAGS = '-C target-feature=+crt-static'
 cargo build --release --locked
-ISCC /DAppVersion=0.2.0 /DBuildLabel=v0.2.0 packaging/windows/emendia.iss
+ISCC /DAppVersion=0.3.0 /DBuildLabel=v0.3.0 packaging/windows/emendia.iss
 ```
 
 Use the actual package version. The installer is written to `target/dist`. Quit any running copy of `target/release/emendia.exe` before rebuilding it.
