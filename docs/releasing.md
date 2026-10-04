@@ -47,7 +47,7 @@ The workflow is `.github/workflows/release.yml`. **Pushing a version tag creates
 
 The tag must exactly match `v` followed by the Cargo package version. Supported versions are `MAJOR.MINOR.PATCH`, optionally followed by a SemVer prerelease suffix. Build metadata (`+...`) is not supported in release filenames.
 
-The current package version is `0.3.0`, so use `v0.3.0`. Ensure the tag includes the workflow and packaging configuration.
+The current package version is `0.3.1`, so use `v0.3.1`. Ensure the tag includes the workflow and packaging configuration.
 
 ### What happens automatically
 
