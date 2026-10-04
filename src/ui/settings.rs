@@ -22,6 +22,20 @@ use tokio::task::AbortHandle;
 const PROVIDERS: &[&str] = &["OpenAI", "LM Studio", "Ollama", "Custom"];
 const ONBOARDING_HERO_HEIGHT: f32 = 310.;
 const ONBOARDING_TITLE_BAR_HEIGHT: f32 = if cfg!(target_os = "windows") { 34. } else { 0. };
+const LOGO_LIGHT: &[u8] = include_bytes!("../ressources/logo.png");
+const LOGO_DARK: &[u8] = include_bytes!("../ressources/logo_w.png");
+
+fn resized_logo(bytes: &[u8], size: u32) -> std::sync::Arc<RenderImage> {
+    let mut buffer = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
+        .expect("Embedded logo must be a valid PNG")
+        .resize(size, size, image::imageops::FilterType::Lanczos3)
+        .into_rgba8();
+    // GPUI's RenderImage expects BGRA pixels.
+    for pixel in buffer.pixels_mut() {
+        pixel.0.swap(0, 2);
+    }
+    std::sync::Arc::new(RenderImage::new(vec![image::Frame::new(buffer)]))
+}
 
 struct ShortcutReassignment {
     shortcut: String,
@@ -160,8 +174,9 @@ pub struct SettingsView {
     _subscriptions: Vec<Subscription>,
     onboarding_step: Option<usize>,
     hero: std::sync::Arc<Image>,
-    logo_light: std::sync::Arc<Image>,
-    logo_dark: std::sync::Arc<Image>,
+    logo_light: std::sync::Arc<RenderImage>,
+    logo_dark: std::sync::Arc<RenderImage>,
+    logo_size: u32,
 }
 
 impl SettingsView {
@@ -382,20 +397,19 @@ impl SettingsView {
                 },
             ));
         }
+        let logo_size = ((if settings.onboarding_completed { 36. } else { 40. })
+            * window.scale_factor())
+        .round()
+        .max(1.) as u32;
         Self {
             onboarding_step: (!settings.onboarding_completed).then_some(0),
             hero: std::sync::Arc::new(Image::from_bytes(
                 ImageFormat::Jpeg,
                 include_bytes!("../ressources/onboard-hero.jpg").to_vec(),
             )),
-            logo_light: std::sync::Arc::new(Image::from_bytes(
-                ImageFormat::Png,
-                include_bytes!("../ressources/logo.png").to_vec(),
-            )),
-            logo_dark: std::sync::Arc::new(Image::from_bytes(
-                ImageFormat::Png,
-                include_bytes!("../ressources/logo_w.png").to_vec(),
-            )),
+            logo_light: resized_logo(LOGO_LIGHT, logo_size),
+            logo_dark: resized_logo(LOGO_DARK, logo_size),
+            logo_size,
             controller,
             provider,
             base_url,
@@ -690,7 +704,16 @@ impl Drop for SettingsView {
 }
 
 impl Render for SettingsView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let logo_size = ((if self.onboarding_step.is_some() { 40. } else { 36. })
+            * window.scale_factor())
+        .round()
+        .max(1.) as u32;
+        if self.logo_size != logo_size {
+            self.logo_light = resized_logo(LOGO_LIGHT, logo_size);
+            self.logo_dark = resized_logo(LOGO_DARK, logo_size);
+            self.logo_size = logo_size;
+        }
         let mut sidebar = v_flex()
             .w(px(200.))
             .flex_shrink_0()
@@ -698,6 +721,17 @@ impl Render for SettingsView {
             .gap_1()
             .border_r_1()
             .border_color(cx.theme().border)
+            .child(
+                div().px_3().pt_3().child(
+                    img(if cx.theme().is_dark() {
+                        self.logo_dark.clone()
+                    } else {
+                        self.logo_light.clone()
+                    })
+                    .size(px(36.))
+                    .object_fit(ObjectFit::Contain),
+                ),
+            )
             .child(
                 div()
                     .px_3()
@@ -732,6 +766,14 @@ impl Render for SettingsView {
                     })),
             );
         }
+        sidebar = sidebar.child(div().flex_1()).child(
+            div()
+                .px_3()
+                .py_2()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(concat!("v", env!("CARGO_PKG_VERSION"))),
+        );
         let mut fields = v_flex().gap_4();
         match self.category {
             Category::General => {
