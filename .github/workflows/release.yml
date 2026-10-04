@@ -273,6 +273,9 @@ jobs:
       - name: Build the Linux executable
         run: cargo "+$RUST_TOOLCHAIN" build --release --locked
 
+      - name: Verify Wayland portal protocol on an isolated bus
+        run: dbus-run-session -- env EMENDIA_PORTAL_TEST=1 cargo "+$RUST_TOOLCHAIN" test --locked --lib wayland_portal_round_trip -- --ignored --nocapture --test-threads=1
+
       - name: Verify X11 integration and graphical flows
         env:
           EMENDIA_BINARY: target/release/emendia

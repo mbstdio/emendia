@@ -25,13 +25,14 @@ entry. Save again after moving the executable.
 The tray uses AppIndicator/StatusNotifierWatcher. GNOME may require an indicator
 extension. Without a tray host, Settings opens and closing the last window exits
 instead of leaving an inaccessible background process. `--settings` opens Settings
-on launch. A native X11 login session is required; Wayland/XWayland sessions are
-not supported yet.
+on launch. Native Wayland support is experimental and depends on the desktop's
+portal implementations; see [Wayland support](wayland.md).
 
-Application windows publish an embedded, multi-size `_NET_WM_ICON` using
+X11 application windows publish an embedded, multi-size `_NET_WM_ICON` using
 `app-logo-light.png`, so the taskbar and Alt+Tab can display the logo even when
 the executable is launched directly without installing its `.desktop` launcher.
 The launcher uses the same fixed base logo.
+Wayland windows use the `emendia` app ID and the installed desktop launcher/icon.
 
 The tray follows the **system appearance**, independently of the theme selected
 inside Emendia: light system theme uses `app-logo-light.png`, dark system theme
@@ -73,3 +74,27 @@ must support Ctrl+C/V, so terminal-specific Ctrl+Shift+C/V is not supported.
 Placement uses RandR monitor geometry, the EWMH work area and GPUI's X-screen scale
 factor. Status windows are non-activating override-redirect windows. Mixed
 per-output fractional scaling remains limited by GPUI's X11 backend.
+
+### Linux Wayland behavior
+
+Global shortcuts are assigned by the desktop through the GlobalShortcuts portal.
+Emendia's saved combinations are preferred triggers, not guaranteed assignments.
+Registration and permission dialogs run asynchronously; saving preferences does
+not mean the desktop has approved them. Actual assignments and capture status
+appear in Settings → Shortcuts.
+
+Capture requires explicit keyboard/clipboard authorization through RemoteDesktop
+and Clipboard. The permission session lasts until application exit or revocation;
+no permissions are persisted and no screen or pointer access is requested.
+Capture injects Ctrl+C after shortcut release, reads a fresh clipboard publication
+and restores the previous transferable formats. Limits are 100,000 UTF-16 units
+for selected text, 32 formats and 16 MiB for snapshots, with bounded transfers.
+Clipboard changes observed during processing cancel restoration. Because the
+portal does not expose atomic conditional ownership, a writer racing the final
+restoration request cannot be excluded. Window/document identity cannot be checked.
+
+All actions, including quick actions, present an editable result with Copy.
+Replace is disabled; Emendia does not inject Ctrl+V into an unverifiable target.
+Window placement is controlled by the compositor and uses GPUI's native scaling.
+Desktop notifications provide processing status without taking keyboard focus.
+Real-desktop acceptance testing on GNOME/KDE is pending.

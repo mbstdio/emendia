@@ -1638,9 +1638,11 @@ name = "emendia"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "ashpd",
  "dbus",
  "directories",
  "embed-resource",
+ "futures-util",
  "global-hotkey",
  "gpui-kit",
  "gtk",
@@ -1648,6 +1650,7 @@ dependencies = [
  "keyring",
  "raw-window-handle",
  "reqwest",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",

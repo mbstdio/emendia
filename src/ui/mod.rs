@@ -16,6 +16,29 @@ use gpui_kit::{
 
 pub type LanguageSelect = Entity<SelectState<Vec<String>>>;
 
+/// GNOME Wayland does not supply a server-side title bar. GPUI Kit already
+/// wraps the window in WindowBorder; supply its matching title bar and controls
+/// only when the compositor actually selected client-side decorations.
+pub(crate) fn with_client_titlebar(
+    title: &'static str,
+    content: impl IntoElement,
+    window: &Window,
+) -> AnyElement {
+    if cfg!(target_os = "linux")
+        && matches!(window.window_decorations(), Decorations::Client { .. })
+    {
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .child(component::TitleBar::new().child(div().text_sm().child(title)))
+            .child(div().flex_1().min_h(px(0.)).min_w(px(0.)).child(content))
+            .into_any_element()
+    } else {
+        content.into_any_element()
+    }
+}
+
 pub fn style_buttons(id: &'static str, value: crate::settings::CorrectionStyle) -> ButtonGroup {
     ButtonGroup::new(id).small().compact().children(
         crate::settings::CorrectionStyle::ALL

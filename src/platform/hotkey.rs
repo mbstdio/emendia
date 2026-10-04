@@ -8,7 +8,11 @@ use global_hotkey::hotkey::{HotKey, Modifiers};
 pub(crate) fn next_event() -> Option<global_hotkey::GlobalHotKeyEvent> {
     #[cfg(target_os = "linux")]
     {
-        super::linux::hotkey::next_event()
+        if super::linux::is_wayland() {
+            super::linux::portal::next_event()
+        } else {
+            super::linux::hotkey::next_event()
+        }
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -63,7 +67,7 @@ pub fn parse_shortcuts(values: [&str; 4]) -> Result<[HotKey; 4]> {
 
 // Lives on GPUI's main thread; Windows registration uses its Win32 message loop.
 pub struct HotkeyRegistration {
-    manager: GlobalHotKeyManager,
+    manager: Option<GlobalHotKeyManager>,
     hotkeys: Option<[HotKey; 4]>,
     registered: Vec<HotKey>,
 }
@@ -119,7 +123,17 @@ impl TranslationMode {
 impl HotkeyRegistration {
     pub fn new() -> Result<Self> {
         Ok(Self {
-            manager: GlobalHotKeyManager::new()?,
+            manager: {
+                #[cfg(target_os = "linux")]
+                if super::linux::is_wayland() {
+                    return Ok(Self {
+                        manager: None,
+                        hotkeys: None,
+                        registered: Vec::new(),
+                    });
+                }
+                Some(GlobalHotKeyManager::new()?)
+            },
             hotkeys: None,
             registered: Vec::new(),
         })
@@ -135,16 +149,30 @@ impl HotkeyRegistration {
         persist: impl FnOnce() -> Result<()>,
     ) -> Result<()> {
         let next = parse_shortcuts(values)?;
+        #[cfg(target_os = "linux")]
+        if self.manager.is_none() {
+            super::linux::portal::validate_shortcuts(next)?;
+            persist()?;
+            super::linux::portal::set_shortcuts(Some(next))?;
+            self.hotkeys = Some(next);
+            return Ok(());
+        }
         update_registration(
             &mut self.registered,
             &next,
             |key| {
-                self.manager.register(key).context(crate::i18n::t(
-                    "Shortcut already used by another application",
-                ))
+                self.manager
+                    .as_ref()
+                    .unwrap()
+                    .register(key)
+                    .context(crate::i18n::t(
+                        "Shortcut already used by another application",
+                    ))
             },
             |key| {
                 self.manager
+                    .as_ref()
+                    .unwrap()
                     .unregister(key)
                     .context(crate::i18n::t("Unable to release shortcut"))
             },
@@ -155,16 +183,28 @@ impl HotkeyRegistration {
     }
 
     pub fn disable(&mut self) -> Result<()> {
+        #[cfg(target_os = "linux")]
+        if self.manager.is_none() {
+            super::linux::portal::set_shortcuts(None)?;
+            self.hotkeys = None;
+            return Ok(());
+        }
         update_registration(
             &mut self.registered,
             &[],
             |key| {
-                self.manager.register(key).context(crate::i18n::t(
-                    "Shortcut already used by another application",
-                ))
+                self.manager
+                    .as_ref()
+                    .unwrap()
+                    .register(key)
+                    .context(crate::i18n::t(
+                        "Shortcut already used by another application",
+                    ))
             },
             |key| {
                 self.manager
+                    .as_ref()
+                    .unwrap()
                     .unregister(key)
                     .context(crate::i18n::t("Unable to release shortcut"))
             },
@@ -190,7 +230,24 @@ impl HotkeyRegistration {
     }
 
     pub fn enabled(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        if self.manager.is_none() {
+            return self.hotkeys.is_some() && super::linux::portal::shortcuts_active();
+        }
         self.hotkeys.is_some()
+    }
+
+    pub fn requested(&self) -> bool {
+        self.hotkeys.is_some()
+    }
+}
+
+impl Drop for HotkeyRegistration {
+    fn drop(&mut self) {
+        #[cfg(target_os = "linux")]
+        if self.manager.is_none() {
+            let _ = super::linux::portal::set_shortcuts(None);
+        }
     }
 }
 

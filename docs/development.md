@@ -31,8 +31,9 @@ For a temporary interface-language override, use `--ui-language=en` or `--ui-lan
 ## Linux X11 build environment
 
 The reference distribution is **Ubuntu 24.04 x64**, with Rust **1.99 or newer**.
-GPUI can render on Linux, but Emendia's desktop integration currently requires an
-Xorg/X11 session with an EWMH-compatible window manager, XTest and XFixes.
+X11 integration requires an EWMH-compatible window manager, XTest and XFixes.
+Experimental native Wayland integration uses XDG desktop portals; see
+[Wayland support](wayland.md) for capabilities and acceptance testing.
 
 ```sh
 sudo apt install build-essential clang cmake pkg-config \
@@ -52,7 +53,7 @@ System language follows `LC_ALL`, `LC_MESSAGES`, then `LANG`.
 GPUI 0.7 uses one scale factor per X screen. `GPUI_X11_SCALE_FACTOR=1.25` can
 override it; RandR monitor bounds and the desktop work area constrain popups.
 Independent fractional scales on different outputs are not supported by this GPUI
-backend. Wayland sessions are detected and rejected, including XWayland-only use.
+backend. Wayland uses GPUI's per-output scaling and compositor-managed placement.
 
 ## Source conventions
 
@@ -79,7 +80,7 @@ src/
     icons.rs               Embedded PNG logos, tray variants and X11 ARGB icon data
     windows.rs             Capture, identity, placement, clipboard and replacement
     windows/               Native Windows startup, tray and desktop tests
-    linux/                 X11 capture, clipboard service, GTK tray, autostart and tests
+    linux/                 X11/Wayland dispatch, portal services, clipboard, tray and tests
     hotkey.rs              Transactional registration of four global shortcuts
     startup.rs             Windows sign-in registration and migration
     tray.rs                Notification icon and menu

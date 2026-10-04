@@ -21,8 +21,10 @@ Both distributions require Windows 10 version 1903 or newer (x64) and graphics d
 
 The Linux archive is built on Ubuntu 24.04 x64 (glibc 2.39 or newer). It includes
 the executable, license, PNG icon, `.desktop` launcher and installation guide.
-It requires an X11 login session and the native runtime libraries listed in the
+It requires the native runtime libraries listed in the
 [Linux distribution guide](../packaging/linux/README.md); it is not a static binary.
+X11 supports capture and replacement. Experimental Wayland capture/preview/copy
+requires compatible desktop portals; GNOME/KDE acceptance validation is pending.
 
 ## Publish a release
 

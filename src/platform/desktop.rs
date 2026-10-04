@@ -1,11 +1,21 @@
 //! Platform-neutral entry point for selection and desktop integration.
+pub fn automatic_replacement_supported() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        !super::linux::is_wayland()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        true
+    }
+}
 #[cfg(target_os = "linux")]
-pub use super::linux::x11::*;
+pub use super::linux::desktop::*;
 #[cfg(target_os = "windows")]
 pub use super::windows::*;
 
 #[cfg(target_os = "linux")]
-pub(crate) use super::linux::x11::{
+pub(crate) use super::linux::desktop::{
     center_window, cursor_monitor, foreground_window, status_is_nonactivating,
     status_placement_for_window,
 };
@@ -40,7 +50,12 @@ pub fn show_status_without_activation(
         super::windows::show_status_without_activation(window, placement)
     }
     #[cfg(target_os = "linux")]
-    super::linux::x11::show_status_without_activation(window, placement, scale)
+    {
+        if super::linux::is_wayland() {
+            anyhow::bail!("Wayland processing status uses desktop notifications");
+        }
+        super::linux::x11::show_status_without_activation(window, placement, scale)
+    }
 }
 
 pub(crate) fn status_has_expected_bounds(window: isize, placement: Placement, scale: f32) -> bool {
@@ -50,5 +65,8 @@ pub(crate) fn status_has_expected_bounds(window: isize, placement: Placement, sc
         super::windows::status_has_expected_bounds(window, placement)
     }
     #[cfg(target_os = "linux")]
-    super::linux::x11::status_has_expected_bounds(window, placement, scale)
+    {
+        !super::linux::is_wayland()
+            && super::linux::x11::status_has_expected_bounds(window, placement, scale)
+    }
 }

@@ -505,7 +505,11 @@ impl SettingsView {
         });
         let success = result.is_ok();
         self.status = match result {
-            Ok(()) => t("Settings saved. Shortcuts are active; you can close this window.").into(),
+            Ok(()) => t(if crate::platform::desktop::automatic_replacement_supported() {
+                "Settings saved. Shortcuts are active; you can close this window."
+            } else {
+                "Settings saved. Approve the desktop shortcuts and authorize Wayland capture in Shortcuts."
+            }).into(),
             Err(error) => error.to_string(),
         };
         cx.notify();
@@ -690,7 +694,7 @@ impl Drop for SettingsView {
 }
 
 impl Render for SettingsView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut sidebar = v_flex()
             .w(px(200.))
             .flex_shrink_0()
@@ -831,12 +835,30 @@ impl Render for SettingsView {
                     .child(field("With preview", self.shortcut(TranslationMode::CorrectionPreview, cx)))
                     .child(field("Quick Check", self.shortcut(TranslationMode::CorrectionQuick, cx)))
                     .child(hint("Shortcuts are shared with Translation and Proofreading. They must be distinct. Save to activate them.", cx));
+                #[cfg(target_os = "linux")]
+                if crate::platform::linux::is_wayland() {
+                    fields = fields
+                        .child(hint("Wayland shortcuts are assigned by your desktop. Saved combinations are preferences; the actual shortcuts are shown below. Quick actions open the result for copying; automatic replacement is unavailable.", cx))
+                        .child(div().text_sm().child(crate::platform::linux::portal::status()))
+                        .child(h_flex().gap_2()
+                            .child(Button::new("wayland-authorize")
+                                .label(t("Authorize Wayland capture"))
+                                .on_click(|_, _, _| crate::platform::linux::portal::authorize_capture()))
+                             .child(Button::new("wayland-shortcuts")
+                                 .label(t("Configure desktop shortcuts"))
+                                 .disabled(!crate::platform::linux::portal::can_configure_shortcuts())
+                                .on_click(|_, _, _| crate::platform::linux::portal::configure_shortcuts())));
+                }
             }
         }
         if self.onboarding_step.is_some() {
-            return self.render_onboarding(fields, cx).into_any_element();
+            return crate::ui::with_client_titlebar(
+                t("Emendia — Welcome"),
+                self.render_onboarding(fields, cx),
+                window,
+            );
         }
-        h_flex()
+        let content = h_flex()
             .size_full()
             .items_stretch()
             .bg(cx.theme().background)
@@ -918,7 +940,8 @@ impl Render for SettingsView {
                             ),
                     ),
             )
-            .into_any_element()
+            .into_any_element();
+        crate::ui::with_client_titlebar(t("Emendia — Settings"), content, window)
     }
 }
 
@@ -996,6 +1019,13 @@ impl SettingsView {
             _ => {
                 "Open an editor, select text, press your translation shortcut and release its keys. Review the suggestion, then choose Replace or Copy."
             }
+        };
+        let description = if !crate::platform::desktop::automatic_replacement_supported()
+            && step >= 5
+        {
+            "Open Settings → Shortcuts to authorize Wayland capture. Return to your editor, select text and release the shortcut keys. Review the result, then use Copy and paste it into your document."
+        } else {
+            description
         };
         let heading = v_flex()
             .gap_2()

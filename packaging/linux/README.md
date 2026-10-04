@@ -1,7 +1,8 @@
-# Emendia for Linux x64 (X11)
+# Emendia for Linux x64
 
 Built for Ubuntu 24.04 x64 (glibc 2.39 or newer), using GPUI's GPU rendering.
-Use an Xorg/X11 login session; Wayland sessions are not supported yet.
+X11 supports capture and replacement. Wayland support is experimental: capture,
+preview and copy use desktop portals; automatic replacement is unavailable.
 
 On Ubuntu 24.04, install the runtime dependencies:
 
@@ -40,6 +41,39 @@ not affect that choice.
 Default shortcuts: Ctrl+F12 (Translate), Ctrl+Shift+F12 (Quick Translate),
 Ctrl+F11 (Proofread), Ctrl+Shift+F11 (Quick Check). Editors must support Ctrl+C/V.
 Terminal-specific Ctrl+Shift+C/V shortcuts are not supported.
+
+## Experimental Wayland workflow
+
+Install `xdg-desktop-portal` and the appropriate backend for your desktop. Capture
+requires implementations of GlobalShortcuts, RemoteDesktop and Clipboard; the
+available versions depend on your desktop and distribution. An installed portal
+package alone does not guarantee all three interfaces are implemented.
+GNOME global shortcuts require GNOME 48 or newer with the matching portal backend.
+Ubuntu 24.04's default GNOME 46 does not support this Wayland workflow; the binary
+can still be used under X11 or with a compatible newer desktop.
+
+Install the launcher and icon as above so the desktop can associate native
+Wayland windows with Emendia. Save settings and approve the global-shortcut
+dialog. In **Settings → Shortcuts**, choose **Authorize Wayland capture** and
+grant keyboard/clipboard access, then return to your document. Capture is triggered
+after releasing a shortcut; release all its modifier keys too.
+
+The settings page shows the actual combinations chosen by the desktop, which can
+differ from Emendia's saved preferences. **Configure desktop shortcuts** requires
+GlobalShortcuts version 2. Authorization must be repeated after application restart
+or session revocation. No screen capture or pointer access is requested.
+
+All four actions open results in a preview. Use **Copy**, return to your document
+and paste manually. **Replace** is disabled because standard portals cannot
+identify and reactivate the original window. Processing status uses desktop
+notifications instead of mapping a window that might take focus.
+
+Clipboard snapshots are bounded to 32 formats and 16 MiB. Owner-change signals
+are checked during reads and before restoration; the portal has no atomic
+compare-and-set operation, so it cannot provide X11's owner/timestamp guarantees.
+Native GNOME/KDE desktop acceptance testing is still pending. Sway's wlr portal
+alone does not supply the required interfaces; Hyprland's shortcut portal alone
+is also insufficient for capture. XWayland is not used as a fallback.
 
 Capture preserves transferable clipboard formats (up to 16 MiB total and 32
 formats), then restores them if no other application changed the clipboard.

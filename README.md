@@ -4,7 +4,7 @@
 
 **Translate. Proofread. Refine.**
 
-Emendia is a native Windows and Linux X11 application that translates and improves selected text in the application you are already using. Built with Rust and GPUI, it runs in the notification area and supports OpenAI, LM Studio, Ollama and other OpenAI-compatible providers.
+Emendia is a native Windows and Linux application that translates and improves selected text in the application you are already using. Built with Rust and GPUI, it runs in the notification area and supports OpenAI, LM Studio, Ollama and other OpenAI-compatible providers. Linux supports X11 and an experimental Wayland capture-and-copy workflow.
 
 Select text → press a shortcut → review the suggestion → **Replace** or **Copy**.
 
@@ -21,11 +21,15 @@ Click the tray icon to open Settings. Closing windows keeps Emendia running; cho
 
 Windows release builds require Windows 10 version 1903 or newer (x64) and compatible graphics drivers. Both Windows downloads use the same executable. Portable builds still store settings in your Windows user profile and API keys in Windows Credential Manager. `SHA256SUMS.txt` is available with each release to verify downloads.
 
-### Linux x64 (X11)
+### Linux x64
 
-Download `Emendia-<version>-linux-x64.tar.gz` from Releases, extract it into a permanent directory, and run `./emendia`. Builds target Ubuntu 24.04 x64 (glibc 2.39 or newer) and require an **Xorg/X11 login session**. See the included README or [Linux distribution guide](packaging/linux/README.md) for runtime dependencies and launcher installation.
+Download `Emendia-<version>-linux-x64.tar.gz` from Releases, extract it into a permanent directory, and run `./emendia`. Builds target Ubuntu 24.04 x64 (glibc 2.39 or newer). See the included README or [Linux distribution guide](packaging/linux/README.md) for runtime dependencies and launcher installation.
 
-API keys use Secret Service (GNOME Keyring or a compatible unlocked keyring). If the desktop has no tray host, Settings opens normally and closing the last window quits Emendia. Wayland sessions are not supported yet.
+API keys use Secret Service (GNOME Keyring or a compatible unlocked keyring). If the desktop has no tray host, Settings opens normally and closing the last window quits Emendia.
+
+On **Wayland**, approve the desktop's global-shortcut dialog, then open **Settings → Shortcuts → Authorize Wayland capture** and grant keyboard/clipboard access. Return to your document, select text, press the shortcut and release all its keys. Results open in a preview with **Copy**; **Replace** is unavailable, and quick actions also open a preview. Capture requires desktop implementations of the GlobalShortcuts, RemoteDesktop and Clipboard portals. GNOME/KDE real-desktop validation is pending; see [Wayland support](docs/wayland.md).
+
+**GNOME requires version 48 or newer** with its matching portal backend for global shortcuts. Ubuntu 24.04's default GNOME 46 does not provide this feature.
 
 ## Default shortcuts
 
@@ -66,7 +70,7 @@ cargo build --release --locked
 ./target/release/emendia
 ```
 
-Create the distribution with `bash packaging/linux/package.sh v0.2.0`. Desktop integration requires X11, XTest and XFixes.
+Create the distribution with `bash packaging/linux/package.sh v0.2.0`. X11 integration requires XTest and XFixes; Wayland integration uses XDG desktop portals.
 
 ## Documentation
 
@@ -78,7 +82,8 @@ Create the distribution with `bash packaging/linux/package.sh v0.2.0`. Desktop i
 ## Roadmap
 
 - [x] Linux X11 build
-- [ ] Linux Wayland support
+- [x] Experimental Linux Wayland capture, preview and copy via portals
+- [ ] Linux Wayland desktop validation and automatic replacement
 - [ ] Mac build? `¯\_(ツ)_/¯`
 - [ ] Better model selection
 - [ ] Overall interface improvements

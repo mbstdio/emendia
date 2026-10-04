@@ -3,7 +3,7 @@ name = "emendia"
 version = "0.2.0"
 edition = "2024"
 rust-version = "1.99"
-description = "Contextual translation and proofreading for Windows and Linux X11, built with Rust and GPUI"
+description = "Contextual translation and proofreading for Windows and Linux, built with Rust and GPUI"
 license = "MIT"
 
 [dependencies]
@@ -22,6 +22,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tray-icon = { version = "0.21", default-features = false }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+ashpd = { version = "0.13.13", default-features = false, features = ["async-io", "global_shortcuts", "remote_desktop", "clipboard", "screencast"] }
+futures-util = "0.3"
+rustix = { version = "1", features = ["fs"] }
+tokio = { version = "1", features = ["net", "io-util"] }
 dbus = "0.9"
 gtk = "0.18"
 keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }

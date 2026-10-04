@@ -328,10 +328,10 @@ impl Drop for Preview {
 }
 
 impl Render for Preview {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_text = !self.translation.read(cx).value().trim().is_empty();
         let unavailable = self.busy || self.replacing || self.copying;
-        v_flex()
+        let content = v_flex()
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
@@ -439,6 +439,14 @@ impl Render for Preview {
                     .text_color(cx.theme().muted_foreground)
                     .child(crate::i18n::localize_message(&self.status)),
             )
+            .when(!desktop::automatic_replacement_supported(), |view| {
+                view.child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(t("Wayland cannot verify the original window. Use Copy.")),
+                )
+            })
             .child(
                 h_flex()
                     .gap_2()
@@ -473,9 +481,14 @@ impl Render for Preview {
                         Button::new("replace")
                             .primary()
                             .label(t("Replace"))
-                            .disabled(unavailable || !has_text)
+                            .disabled(
+                                unavailable
+                                    || !has_text
+                                    || !desktop::automatic_replacement_supported(),
+                            )
                             .on_click(cx.listener(|this, _, window, cx| this.replace(window, cx))),
                     ),
-            )
+            );
+        crate::ui::with_client_titlebar(self.operation.title(), content, window)
     }
 }

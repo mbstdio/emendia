@@ -92,7 +92,15 @@ impl Controller {
         cx: &mut Context<Self>,
     ) -> Result<()> {
         self.smoke_layout_check = true;
+        #[cfg(target_os = "linux")]
+        crate::platform::linux::desktop::configure_display(cx)?;
         let selection = Selection::smoke_fixture()?;
+        #[cfg(target_os = "linux")]
+        if crate::platform::linux::is_wayland() {
+            anyhow::ensure!(!quick, "The quick replacement smoke test requires X11");
+            self.open_preview_result(selection, self.settings.clone(), operation, None, cx);
+            return Ok(());
+        }
         let foreground = desktop::foreground_window();
         let placement = desktop::status_placement_for_window(foreground)?;
         self.open_status(placement, operation, cx)?;
@@ -213,8 +221,8 @@ impl Controller {
         cx: &mut Context<Self>,
     ) {
         #[cfg(target_os = "linux")]
-        if let Err(error) = crate::platform::linux::x11::configure_display(cx) {
-            tracing::warn!(%error, "Unable to synchronize the X11 display scale");
+        if let Err(error) = crate::platform::linux::desktop::configure_display(cx) {
+            tracing::warn!(%error, "Unable to synchronize the desktop display");
         }
         crate::ui::theme::apply(self.settings.theme, cx);
         gpui_kit::component::set_locale(if t("Settings") == "Settings" {
@@ -252,6 +260,19 @@ impl Controller {
     }
 
     fn poll_events(&mut self, cx: &mut Context<Self>) {
+        #[cfg(target_os = "linux")]
+        if crate::platform::linux::is_wayland() {
+            let changed = crate::platform::linux::portal::take_changed();
+            if changed {
+                self.tray.set_enabled(self.hotkey.enabled());
+            }
+            if changed && let Some((_, view)) = &self.settings_window {
+                let _ = view.update(cx, |_, cx| cx.notify());
+            }
+            while let Some(error) = crate::platform::linux::portal::next_error() {
+                self.open_settings(Some(error), cx);
+            }
+        }
         // GPUI tracks the system appearance even while no windows are open.
         // Deliberately do not use the application ThemePreference here.
         if let Err(error) = self
@@ -272,7 +293,7 @@ impl Controller {
                     self.open_settings(None, cx);
                     continue;
                 }
-                let result = if self.hotkey.enabled() {
+                let result = if self.hotkey.requested() {
                     self.hotkey.disable()
                 } else {
                     self.hotkey.change(self.settings.shortcuts())
@@ -339,6 +360,11 @@ impl Controller {
                 return;
             }
             self.preview_window = None;
+        }
+        #[cfg(target_os = "linux")]
+        if let Err(error) = crate::platform::linux::desktop::configure_display(cx) {
+            self.open_settings(Some(error.to_string()), cx);
+            return;
         }
         let target = match desktop::capture_target() {
             Ok(target) => target,
@@ -420,6 +446,10 @@ impl Controller {
     }
 
     fn close_status(&mut self, cx: &mut Context<Self>) {
+        #[cfg(target_os = "linux")]
+        if crate::platform::linux::is_wayland() {
+            crate::platform::linux::portal::close_notification();
+        }
         if let Some((window, _)) = self.status_window.take() {
             let _ = window.update(cx, |_, window, _| window.remove_window());
         }
@@ -431,6 +461,16 @@ impl Controller {
         operation: Operation,
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        #[cfg(target_os = "linux")]
+        if crate::platform::linux::is_wayland() {
+            // A Wayland xdg_toplevel can take focus on mapping, even with focus:false.
+            // Keep capture invisible until the preview is ready.
+            crate::platform::linux::portal::notify_status(
+                t("Capturing text… Release the shortcut keys.").into(),
+            );
+            let _ = (placement, operation, cx);
+            return Ok(());
+        }
         self.close_status(cx);
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::new(
@@ -473,6 +513,15 @@ impl Controller {
     }
 
     fn set_status(&mut self, message: String, terminal: bool, error: bool, cx: &mut Context<Self>) {
+        #[cfg(target_os = "linux")]
+        if crate::platform::linux::is_wayland() {
+            tracing::info!(%message, terminal, error, "Wayland processing status");
+            crate::platform::linux::portal::notify_status(message.clone());
+            if terminal && error {
+                self.open_settings(Some(message), cx);
+            }
+            return;
+        }
         let Some((window, view)) = &self.status_window else {
             return;
         };
@@ -546,17 +595,26 @@ impl Controller {
                         this.set_status(t("Done — text replaced.").into(), true, false, cx)
                     }
                     Ok((text, Err(error))) => {
-                        this.set_status(
-                            format!("{}: {error}", t("Replacement unavailable")),
-                            true,
-                            true,
-                            cx,
-                        );
+                        if desktop::automatic_replacement_supported() {
+                            this.set_status(
+                                format!("{}: {error}", t("Replacement unavailable")),
+                                true,
+                                true,
+                                cx,
+                            );
+                        }
                         this.open_preview_result(
                             selection,
                             settings,
                             operation,
-                            Some((text, format!("{} : {error}", operation.quick_title()))),
+                            Some((
+                                text,
+                                if desktop::automatic_replacement_supported() {
+                                    format!("{} : {error}", operation.quick_title())
+                                } else {
+                                    error.to_string()
+                                },
+                            )),
                             cx,
                         )
                     }
@@ -580,6 +638,10 @@ impl Controller {
         result: Option<(String, String)>,
         cx: &mut Context<Self>,
     ) {
+        #[cfg(target_os = "linux")]
+        if crate::platform::linux::is_wayland() {
+            self.close_status(cx);
+        }
         let placement = selection.placement;
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::new(
@@ -599,7 +661,14 @@ impl Controller {
                 ..Default::default()
             }),
             is_minimizable: false,
-            window_min_size: Some(size(px(360.), px(320.))),
+            window_min_size: Some(size(
+                px(360.),
+                px(if desktop::automatic_replacement_supported() {
+                    320.
+                } else {
+                    420.
+                }),
+            )),
             ..Default::default()
         };
         let controller = cx.entity().downgrade();
@@ -646,6 +715,10 @@ impl Controller {
     }
 
     pub fn open_settings(&mut self, error: Option<String>, cx: &mut Context<Self>) {
+        #[cfg(target_os = "linux")]
+        if crate::platform::linux::is_wayland() {
+            let _ = crate::platform::linux::desktop::configure_display(cx);
+        }
         if let Some((handle, view)) = &self.settings_window
             && handle
                 .update(cx, |_, window, cx| {
@@ -735,11 +808,13 @@ impl Controller {
                     );
                 }
                 #[cfg(target_os = "linux")]
-                assert!(
-                    desktop::native_window(window)
-                        .is_ok_and(crate::platform::linux::x11::smoke_window_has_icon),
-                    "Onboarding must expose the fixed app logo to the X11 taskbar"
-                );
+                if !crate::platform::linux::is_wayland() {
+                    assert!(
+                        desktop::native_window(window)
+                            .is_ok_and(crate::platform::linux::x11::smoke_window_has_icon),
+                        "Onboarding must expose the fixed app logo to the X11 taskbar"
+                    );
+                }
                 view.update(cx, |view, cx| view.smoke_onboarding_step(step, cx))
                     .expect("Setup view must exist");
             })

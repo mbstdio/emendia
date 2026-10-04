@@ -22,8 +22,9 @@ pub fn configure_window(window: &mut Window, cx: &mut App) {
     #[cfg(target_os = "linux")]
     {
         window.set_app_id("emendia");
-        if let Err(error) = crate::platform::desktop::native_window(window)
-            .and_then(crate::platform::linux::x11::set_window_icon)
+        if !crate::platform::linux::is_wayland()
+            && let Err(error) = crate::platform::desktop::native_window(window)
+                .and_then(crate::platform::linux::x11::set_window_icon)
         {
             tracing::warn!(%error, "Unable to set the application window icon");
         }
