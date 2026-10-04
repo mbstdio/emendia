@@ -98,6 +98,12 @@ from the server mapping, and unregistering uses the original registered keycode.
 
 ## Verification
 
+`.github/workflows/ci.yml` runs formatting, Clippy and non-ignored tests for
+every pull request and push to `main`, on GitHub-hosted Windows 2022 and Ubuntu
+24.04 runners. It uses the same Rust 1.99.0 toolchain and locked dependencies as
+release builds. New commits cancel superseded checks for the same pull request
+or branch. Packaging remains in the separate release workflow.
+
 ```powershell
 cargo fmt --check
 cargo clippy --all-targets --locked -- -D warnings
