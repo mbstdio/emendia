@@ -30,6 +30,7 @@ struct CompletionResponse {
 #[derive(Deserialize)]
 struct Choice {
     message: ResponseMessage,
+    finish_reason: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -158,12 +159,26 @@ impl Translator {
             .json()
             .await
             .context(t("Incompatible response: expected chat/completions JSON"))?;
-        let message = completion
+        let choice = completion
             .choices
             .into_iter()
             .next()
-            .context(t("The provider returned no suggestions"))?
-            .message;
+            .context(t("The provider returned no suggestions"))?;
+        // Some compatible providers omit finish_reason. Reject any explicit
+        // non-success reason before a partial result can reach automatic replacement.
+        match choice.finish_reason.as_deref() {
+            None | Some("stop") => {}
+            Some("length") => bail!(t(
+                "The provider truncated the result. No replacement performed; reduce the selection or increase the provider's output limit."
+            )),
+            Some("content_filter") => bail!(t(
+                "The provider filtered this result. No replacement performed."
+            )),
+            Some(_) => bail!(t(
+                "The provider did not complete the result. No replacement performed."
+            )),
+        }
+        let message = choice.message;
         if message.refusal.is_some() {
             bail!(t("The model refused this request."));
         }
