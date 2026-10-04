@@ -300,6 +300,7 @@ catalog! {
         "The clipboard is busy in another application." => "Le presse-papiers est occupé par une autre application.",
         "The clipboard contains a private format that cannot be restored. Copy text first, then try again." => "Le presse-papiers contient un format privé non restaurable. Copie d’abord du texte, puis réessaie.",
         "Unable to preserve the clipboard" => "Impossible de préserver le presse-papiers",
+        "Unable to restore the previous clipboard" => "Impossible de restaurer le presse-papiers précédent",
         "Unable to preserve a clipboard format; capture cancelled." => "Impossible de préserver un format du presse-papiers ; capture annulée.",
         "The clipboard was modified by another application." => "Le presse-papiers a été modifié par une autre application.",
         "Unable to verify the clipboard source; capture cancelled." => "Impossible de vérifier l’origine du presse-papiers ; capture annulée.",

@@ -568,6 +568,7 @@ fn copy_selection(desktop: &Desktop, destination: &Destination) -> Result<String
     // Preserve all transferable formats and take ownership first. A subsequent
     // Ctrl+C must publish a fresh selection, even when the editor was the old owner.
     let reserved = clipboard::put(snapshot.clone(), Some(before))?;
+    let mut copied_stamp = None;
     let result = (|| -> Result<(String, clipboard::Stamp)> {
         desktop.check(destination)?;
         desktop.send_ctrl(b'c' as u32)?;
@@ -580,6 +581,8 @@ fn copy_selection(desktop: &Desktop, destination: &Destination) -> Result<String
         if reader.stamp()? != copied {
             bail!("The clipboard changed while verifying the selection source");
         }
+        // Retain the verified generation even if decoding or transfer fails.
+        copied_stamp = Some(copied);
         let text = reader.text()?;
         desktop.check(destination)?;
         if reader.stamp()? != copied {
@@ -590,12 +593,23 @@ fn copy_selection(desktop: &Desktop, destination: &Destination) -> Result<String
     match result {
         Ok((text, copied)) => {
             clipboard::put(snapshot, Some(copied))
-                .context("Unable to restore the previous clipboard")?;
+                .context(crate::i18n::t("Unable to restore the previous clipboard"))?;
             Ok(text)
         }
         Err(error) => {
-            // Restore only our reserved data. Never overwrite a concurrent writer.
-            let _ = clipboard::put(snapshot, Some(reserved));
+            // Restore our reservation or the verified copy, never a third-party
+            // publication. The owner thread checks the generation again atomically.
+            let expected = copied_stamp.unwrap_or(reserved);
+            if reader.stamp().is_ok_and(|current| current != expected) {
+                return Err(error);
+            }
+            if let Err(rollback) = clipboard::put(snapshot, Some(expected)) {
+                let message = format!(
+                    "{error:#}. {}: {rollback:#}",
+                    crate::i18n::t("Unable to restore the previous clipboard")
+                );
+                return Err(error.context(message));
+            }
             Err(error)
         }
     }
