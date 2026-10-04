@@ -68,6 +68,11 @@ pub struct HotkeyRegistration {
     registered: Vec<HotKey>,
 }
 
+pub(crate) struct PendingHotkeys {
+    next: [HotKey; 4],
+    previous: Vec<HotKey>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TranslationMode {
     Preview,
@@ -127,6 +132,78 @@ impl HotkeyRegistration {
 
     pub fn change(&mut self, values: [&str; 4]) -> Result<()> {
         self.change_with(values, || Ok(()))
+    }
+
+    /// Reserve new bindings while keeping the previous mapping active until
+    /// background persistence completes. Native registration stays on the UI thread.
+    pub(crate) fn prepare_change(&mut self, values: [&str; 4]) -> Result<PendingHotkeys> {
+        let next = parse_shortcuts(values)?;
+        let previous = self.registered.clone();
+        let mut reserved = previous.clone();
+        for key in next {
+            if !reserved.contains(&key) {
+                reserved.push(key);
+            }
+        }
+        update_registration(
+            &mut self.registered,
+            &reserved,
+            |key| {
+                self.manager.register(key).context(crate::i18n::t(
+                    "Shortcut already used by another application",
+                ))
+            },
+            |key| {
+                self.manager
+                    .unregister(key)
+                    .context(crate::i18n::t("Unable to release shortcut"))
+            },
+            || Ok(()),
+        )?;
+        Ok(PendingHotkeys { next, previous })
+    }
+
+    pub(crate) fn finish_change(
+        &mut self,
+        pending: PendingHotkeys,
+        persisted: Result<()>,
+    ) -> Result<()> {
+        let keep = if persisted.is_ok() {
+            pending.next.as_slice()
+        } else {
+            pending.previous.as_slice()
+        };
+        let obsolete: Vec<_> = self
+            .registered
+            .iter()
+            .copied()
+            .filter(|key| !keep.contains(key))
+            .collect();
+        let mut failures = Vec::new();
+        for key in obsolete {
+            match self.manager.unregister(key) {
+                Ok(()) => self.registered.retain(|reserved| *reserved != key),
+                Err(error) => failures.push(error.to_string()),
+            }
+        }
+        match persisted {
+            Ok(()) => {
+                self.hotkeys = Some(pending.next);
+                for error in failures {
+                    tracing::warn!(%error, "Old shortcut retained for a later cleanup attempt");
+                }
+                Ok(())
+            }
+            Err(error) if failures.is_empty() => Err(error),
+            Err(error) => {
+                let message = format!(
+                    "{error:#}. {}: {}",
+                    crate::i18n::t("Incomplete cleanup of new shortcuts"),
+                    failures.join(" ; ")
+                );
+                Err(error.context(message))
+            }
+        }
     }
 
     pub fn change_with(

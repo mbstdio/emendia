@@ -243,6 +243,7 @@ impl Settings {
     }
 }
 
+#[derive(Clone)]
 pub struct SettingsStore {
     path: PathBuf,
     legacy_path: Option<PathBuf>,

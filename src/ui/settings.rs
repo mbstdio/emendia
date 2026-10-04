@@ -157,6 +157,9 @@ pub struct SettingsView {
     api_key: Entity<InputState>,
     api_key_endpoint: String,
     api_key_drafts: HashMap<String, String>,
+    api_key_version: u64,
+    api_key_loading: bool,
+    api_key_loaded: bool,
     source: LanguageSelect,
     target: LanguageSelect,
     shortcuts: ShortcutDraft,
@@ -172,6 +175,7 @@ pub struct SettingsView {
     focus: FocusHandle,
     pub status: String,
     testing: bool,
+    saving: bool,
     pending: Option<AbortHandle>,
     test_version: u64,
     _subscriptions: Vec<Subscription>,
@@ -203,6 +207,10 @@ impl SettingsView {
             });
         })
         .detach();
+        let weak = cx.entity().downgrade();
+        window.on_window_should_close(cx, move |_, cx| {
+            weak.upgrade().is_none_or(|view| !view.read(cx).saving)
+        });
         let preset = match settings.base_url.trim_end_matches('/') {
             "https://api.openai.com/v1" => 0,
             "http://localhost:1234/v1" => 1,
@@ -222,16 +230,10 @@ impl SettingsView {
         });
         let base_url = text_input(&settings.base_url, window, cx);
         let model = text_input(&settings.model, window, cx);
-        let (key, key_error) = match settings::load_api_key(&settings.base_url) {
-            Ok(key) => (key, None),
-            Err(e) => (String::new(), Some(e.to_string())),
-        };
         let api_key = cx.new(|cx| {
-            let mut input = InputState::new(window, cx)
+            InputState::new(window, cx)
                 .masked(true)
-                .placeholder(t("Optional for a local server"));
-            input.set_value(key, window, cx);
-            input
+                .placeholder(t("Optional for a local server"))
         });
         let source = language_select(&settings.source_language, true, window, cx);
         let target = language_select(&settings.target_language, false, window, cx);
@@ -271,37 +273,24 @@ impl SettingsView {
                 window,
                 |this, select, event: &SelectEvent<Vec<String>>, window, cx| {
                     if let SelectEvent::Confirm(Some(_)) = event {
+                        if this.saving {
+                            return;
+                        }
                         let Some(index) = select.read(cx).selected_index(cx) else {
                             return;
                         };
                         let Some(language) = UiLanguage::ALL.get(index.row).copied() else {
                             return;
                         };
-                        match this
+                        let task = this
                             .controller
                             .update(cx, |app, cx| app.set_language(language, cx))
-                            .and_then(|r| r)
-                        {
-                            Ok(()) => {
-                                this.ui_language = language;
-                                this.localize(window, cx);
-                                this.status = t("Interface language applied and saved.").into();
-                            }
-                            Err(error) => {
-                                this.language.update(cx, |state, cx| {
-                                    state.set_selected_index(
-                                        UiLanguage::ALL
-                                            .iter()
-                                            .position(|v| *v == this.ui_language)
-                                            .map(IndexPath::new),
-                                        window,
-                                        cx,
-                                    )
-                                });
-                                this.status = error.to_string();
-                            }
-                        }
-                        cx.notify();
+                            .and_then(|r| r);
+                        this.await_persistence(task, window, cx, move |this, window, cx| {
+                            this.ui_language = language;
+                            this.localize(window, cx);
+                            this.status = t("Interface language applied and saved.").into();
+                        });
                     }
                 },
             ),
@@ -310,33 +299,23 @@ impl SettingsView {
                 window,
                 |this, _, event: &SelectEvent<Vec<String>>, window, cx| {
                     if let SelectEvent::Confirm(Some(label)) = event {
+                        if this.saving {
+                            return;
+                        }
                         let Some(theme) = ThemePreference::from_label(label) else {
                             return;
                         };
                         if theme == this.theme_preference {
                             return;
                         }
-                        match this
+                        let task = this
                             .controller
                             .update(cx, |app, cx| app.set_theme(theme, cx))
-                            .and_then(|result| result)
-                        {
-                            Ok(()) => {
-                                this.theme_preference = theme;
-                                this.status = t("Theme applied and saved.").into();
-                            }
-                            Err(error) => {
-                                let index = ThemePreference::ALL
-                                    .iter()
-                                    .position(|theme| *theme == this.theme_preference)
-                                    .map(IndexPath::new);
-                                this.theme.update(cx, |state, cx| {
-                                    state.set_selected_index(index, window, cx)
-                                });
-                                this.status = error.to_string();
-                            }
-                        }
-                        cx.notify();
+                            .and_then(|result| result);
+                        this.await_persistence(task, window, cx, move |this, _, _| {
+                            this.theme_preference = theme;
+                            this.status = t("Theme applied and saved.").into();
+                        });
                     }
                 },
             ),
@@ -379,11 +358,16 @@ impl SettingsView {
             ),
         ];
         for input in [&model, &api_key] {
+            let is_api_key = input == &api_key;
             subscriptions.push(cx.subscribe_in(
                 input,
                 window,
-                |this, _, event: &InputEvent, _, cx| {
+                move |this, _, event: &InputEvent, _, cx| {
                     if matches!(event, InputEvent::Change) {
+                        if is_api_key && !this.api_key_loading {
+                            this.api_key_loaded = true;
+                            this.api_key_version += 1;
+                        }
                         this.cancel_test();
                         cx.notify();
                     }
@@ -407,7 +391,7 @@ impl SettingsView {
         }) * window.scale_factor())
         .round()
         .max(1.) as u32;
-        Self {
+        let mut view = Self {
             onboarding_step: (!settings.onboarding_completed).then_some(0),
             hero: std::sync::Arc::new(Image::from_bytes(
                 ImageFormat::Jpeg,
@@ -421,8 +405,11 @@ impl SettingsView {
             base_url,
             model,
             api_key,
-            api_key_endpoint: settings::normalize_endpoint(&settings.base_url).to_owned(),
+            api_key_endpoint: String::new(),
             api_key_drafts: HashMap::new(),
+            api_key_version: 0,
+            api_key_loading: false,
+            api_key_loaded: false,
             source,
             target,
             shortcuts: ShortcutDraft::new(&settings),
@@ -436,7 +423,7 @@ impl SettingsView {
             category: Category::General,
             recording: None,
             focus: cx.focus_handle(),
-            status: error.or(key_error).unwrap_or_else(|| {
+            status: error.unwrap_or_else(|| {
                 if provider_configured || !settings.onboarding_completed {
                     String::new()
                 } else {
@@ -444,10 +431,13 @@ impl SettingsView {
                 }
             }),
             testing: false,
+            saving: false,
             pending: None,
             test_version: 0,
             _subscriptions: subscriptions,
-        }
+        };
+        view.reload_key(window, cx);
+        view
     }
 
     fn reload_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -457,26 +447,69 @@ impl SettingsView {
         }
         // Drafts stay in this form only. Switching providers must not discard an
         // edited key, and cosmetic URL changes must not reload a saved credential.
-        self.api_key_drafts.insert(
-            self.api_key_endpoint.clone(),
-            self.api_key.read(cx).value().to_string(),
-        );
-        let key = if let Some(key) = self.api_key_drafts.get(&url) {
-            Ok(key.clone())
-        } else {
-            settings::load_api_key(&url)
-        };
-        self.api_key_endpoint = url;
-        match key {
-            Ok(key) => self
-                .api_key
-                .update(cx, |state, cx| state.set_value(key, window, cx)),
-            Err(error) => {
-                self.api_key
-                    .update(cx, |state, cx| state.set_value("", window, cx));
-                self.status = error.to_string();
-            }
+        if self.api_key_loaded {
+            self.api_key_drafts.insert(
+                self.api_key_endpoint.clone(),
+                self.api_key.read(cx).value().to_string(),
+            );
         }
+        self.api_key_endpoint = url.clone();
+        self.api_key_version += 1;
+        let version = self.api_key_version;
+        self.api_key_loading = true;
+        self.api_key_loaded = false;
+        self.api_key
+            .update(cx, |state, cx| state.set_value("", window, cx));
+        if let Some(key) = self.api_key_drafts.get(&url) {
+            self.api_key
+                .update(cx, |state, cx| state.set_value(key.clone(), window, cx));
+            self.api_key_loaded = true;
+            self.api_key_loading = false;
+            return;
+        }
+        if !reqwest::Url::parse(&url).is_ok_and(|url| {
+            matches!(url.scheme(), "http" | "https")
+                && url.host_str().is_some()
+                && url.username().is_empty()
+                && url.password().is_none()
+                && url.query().is_none()
+                && url.fragment().is_none()
+        }) {
+            self.api_key_loading = false;
+            return;
+        }
+        cx.spawn_in(window, async move |this, cx| {
+            // Do not query Secret Service for every intermediate URL while typing.
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(300))
+                .await;
+            if !this
+                .update_in(cx, |this, _, _| this.api_key_version == version)
+                .unwrap_or(false)
+            {
+                return;
+            }
+            let result = cx
+                .background_executor()
+                .spawn(async move { settings::load_api_key(&url) })
+                .await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                if this.api_key_version != version {
+                    return;
+                }
+                match result {
+                    Ok(key) => {
+                        this.api_key
+                            .update(cx, |state, cx| state.set_value(key, window, cx));
+                        this.api_key_loaded = true;
+                    }
+                    Err(error) => this.status = error.to_string(),
+                }
+                this.api_key_loading = false;
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn cancel_test(&mut self) {
@@ -525,6 +558,11 @@ impl SettingsView {
         };
         settings.validate()?;
         settings.validate_hotkeys()?;
+        if self.api_key_loading || !self.api_key_loaded {
+            anyhow::bail!(t(
+                "Wait for the API key to load, or enter it manually if the keyring is unavailable."
+            ));
+        }
         let key = self.api_key.read(cx).value().trim().to_owned();
         if self.onboarding_step.is_some()
             && settings.base_url == "https://api.openai.com/v1"
@@ -535,23 +573,89 @@ impl SettingsView {
         Ok((settings, key))
     }
 
-    fn save(&mut self, cx: &mut Context<Self>) -> bool {
+    fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.saving || self.api_key_loading {
+            return;
+        }
         // A late connection response must never overwrite the save outcome.
         self.cancel_test();
         let result = self.values(cx).and_then(|(settings, key)| {
             self.controller
-                .update(cx, |app, _| app.save_settings(settings, &key))?
+                .update(cx, |app, cx| app.save_settings(settings, key, cx))?
         });
-        let success = result.is_ok();
-        self.status = match result {
-            Ok(()) => t("Settings saved. Shortcuts are active; you can close this window.").into(),
-            Err(error) => error.to_string(),
+        self.await_persistence(result, window, cx, |this, _, cx| {
+            this.status =
+                t("Settings saved. Shortcuts are active; you can close this window.").into();
+            if this.onboarding_step == Some(4) {
+                this.set_onboarding_step(5, cx);
+            }
+        });
+    }
+
+    fn await_persistence(
+        &mut self,
+        task: Result<Task<Result<()>>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        on_success: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    ) {
+        let task = match task {
+            Ok(task) => task,
+            Err(error) => {
+                self.restore_appearance(window, cx);
+                self.status = error.to_string();
+                cx.notify();
+                return;
+            }
         };
+        self.cancel_test();
+        self.saving = true;
+        self.status = t("Saving settings…").into();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = task.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.saving = false;
+                match result {
+                    Ok(()) => on_success(this, window, cx),
+                    Err(error) => {
+                        this.restore_appearance(window, cx);
+                        this.status = error.to_string();
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
         cx.notify();
-        success
+    }
+
+    fn restore_appearance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.theme.update(cx, |state, cx| {
+            state.set_selected_index(
+                ThemePreference::ALL
+                    .iter()
+                    .position(|theme| *theme == self.theme_preference)
+                    .map(IndexPath::new),
+                window,
+                cx,
+            )
+        });
+        self.language.update(cx, |state, cx| {
+            state.set_selected_index(
+                UiLanguage::ALL
+                    .iter()
+                    .position(|language| *language == self.ui_language)
+                    .map(IndexPath::new),
+                window,
+                cx,
+            )
+        });
     }
 
     fn test(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.saving || self.api_key_loading {
+            return;
+        }
         let (settings, key) = match self.values(cx) {
             Ok(values) => values,
             Err(error) => {
@@ -607,6 +711,9 @@ impl SettingsView {
     }
 
     fn record(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        if self.saving {
+            return;
+        }
         let Some(mode) = self.recording else {
             return;
         };
@@ -656,6 +763,9 @@ impl SettingsView {
         candidate: String,
         cx: &mut Context<Self>,
     ) {
+        if self.saving {
+            return;
+        }
         match self.shortcuts.assign(mode, candidate) {
             Ok(()) => {
                 self.recording = None;
@@ -773,6 +883,7 @@ impl Render for SettingsView {
             sidebar = sidebar.child(
                 Button::new(("category-nav", category as usize))
                     .ghost()
+                    .disabled(self.saving)
                     .w_full()
                     .justify_start()
                     .child(
@@ -807,23 +918,37 @@ impl Render for SettingsView {
             Category::General => {
                 fields = fields
                     .child(section("Appearance", "The theme applies to every application window.", cx))
-                    .child(field("Theme", Select::new(&self.theme).w_full()))
+                    .child(field("Theme", Select::new(&self.theme).disabled(self.saving).w_full()))
                     .child(hint("Saved immediately. System follows the desktop theme.", cx))
-                    .child(field("Interface language", Select::new(&self.language).w_full()))
+                    .child(field("Interface language", Select::new(&self.language).disabled(self.saving).w_full()))
                     .child(hint("Saved immediately. System uses French for a French system locale, English otherwise.", cx))
                     .child(section("Startup", "Find the application in the notification area.", cx))
-                    .child(Checkbox::new("launch-at-startup").label(t("Launch at sign-in")).checked(self.launch_at_startup)
+                    .child(Checkbox::new("launch-at-startup").disabled(self.saving).label(t("Launch at sign-in")).checked(self.launch_at_startup)
                         .on_click(cx.listener(|this, checked, _, cx| { this.launch_at_startup = *checked; cx.notify(); })))
                     .child(hint("Save to apply this option. The application starts in the tray when you sign in.", cx))
                     .child(hint("Closing windows leaves the application in the tray. To exit: tray → Quit.", cx));
             }
             Category::Provider => {
                 fields = fields
-                    .child(field("Provider", Select::new(&self.provider).w_full()))
-                    .child(field("Base URL", Input::new(&self.base_url)))
+                    .child(field(
+                        "Provider",
+                        Select::new(&self.provider).disabled(self.saving).w_full(),
+                    ))
+                    .child(field(
+                        "Base URL",
+                        Input::new(&self.base_url).disabled(self.saving),
+                    ))
                     .child(hint("Include /v1, without /chat/completions.", cx))
-                    .child(field("Model", Input::new(&self.model)))
-                    .child(field("API key", Input::new(&self.api_key).mask_toggle()))
+                    .child(field(
+                        "Model",
+                        Input::new(&self.model).disabled(self.saving),
+                    ))
+                    .child(field(
+                        "API key",
+                        Input::new(&self.api_key)
+                            .disabled(self.saving || self.api_key_loading)
+                            .mask_toggle(),
+                    ))
                     .child(hint(
                         "Stored in the system keyring. Optional for a local server.",
                         cx,
@@ -835,26 +960,27 @@ impl Render for SettingsView {
                             } else {
                                 "Test connection"
                             }))
-                            .disabled(self.testing)
+                            .disabled(self.testing || self.saving || self.api_key_loading)
                             .on_click(cx.listener(|this, _, window, cx| this.test(window, cx))),
                     );
             }
             Category::Translation => {
                 fields = fields
                     .child(section("Default languages", "You can change these languages in the preview.", cx))
-                    .child(field("Source language", Select::new(&self.source).w_full()))
-                    .child(field("Target language", Select::new(&self.target).w_full()))
+                    .child(field("Source language", Select::new(&self.source).disabled(self.saving).w_full()))
+                    .child(field("Target language", Select::new(&self.target).disabled(self.saving).w_full()))
                     .child(section("With preview", "Review or edit the translation before replacing the text.", cx))
                     .child(self.shortcut(TranslationMode::Preview, cx))
                     .child(section("Quick Translate", "Translates and replaces the selection in the background using the saved languages and provider.", cx))
                     .child(self.shortcut(TranslationMode::Quick, cx));
                 if self.onboarding_step.is_some() {
                     fields = v_flex().gap_4()
-                        .child(field("Source language", Select::new(&self.source).w_full()))
-                        .child(field("Target language", Select::new(&self.target).w_full()))
+                        .child(field("Source language", Select::new(&self.source).disabled(self.saving).w_full()))
+                        .child(field("Target language", Select::new(&self.target).disabled(self.saving).w_full()))
                         .child(hint("Interface language does not affect translation languages.", cx))
                         .child(hint("Proofreading keeps the text's language. Faithful mode preserves tone and wording; other modes adjust the style without changing the meaning.", cx))
                         .child(field("With preview", style_buttons("onboarding-style", self.style)
+                            .disabled(self.saving)
                             .on_click(cx.listener(|this, indices: &Vec<usize>, _, cx| {
                                 if let Some(style) = indices.first().and_then(|index| CorrectionStyle::ALL.get(*index)).copied() {
                                     this.style = style;
@@ -862,6 +988,7 @@ impl Render for SettingsView {
                                 }
                             }))))
                         .child(field("Quick Check", style_buttons("onboarding-quick-style", self.quick_style)
+                            .disabled(self.saving)
                             .on_click(cx.listener(|this, indices: &Vec<usize>, _, cx| {
                                 if let Some(style) = indices.first().and_then(|index| CorrectionStyle::ALL.get(*index)).copied() {
                                     this.quick_style = style;
@@ -875,6 +1002,7 @@ impl Render for SettingsView {
                     .child(hint("Proofreading keeps the text's language. Faithful mode preserves tone and wording; other modes adjust the style without changing the meaning.", cx))
                     .child(section("With preview", "Review or edit the correction before replacing the text.", cx))
                     .child(field("Default mode", style_buttons("default-correction-modes", self.style)
+                        .disabled(self.saving)
                         .on_click(cx.listener(|this, indices: &Vec<usize>, _, cx| {
                             if let Some(style) = indices.first().and_then(|index| CorrectionStyle::ALL.get(*index)).copied() {
                                 this.style = style;
@@ -884,6 +1012,7 @@ impl Render for SettingsView {
                     .child(self.shortcut(TranslationMode::CorrectionPreview, cx))
                     .child(section("Quick Check", "Proofreads and replaces the selection directly in the background.", cx))
                     .child(field("Default mode", style_buttons("quick-correction-modes", self.quick_style)
+                        .disabled(self.saving)
                         .on_click(cx.listener(|this, indices: &Vec<usize>, _, cx| {
                             if let Some(style) = indices.first().and_then(|index| CorrectionStyle::ALL.get(*index)).copied() {
                                 this.quick_style = style;
@@ -970,6 +1099,7 @@ impl Render for SettingsView {
                                     .child(
                                         Button::new("close")
                                             .ghost()
+                                            .disabled(self.saving)
                                             .label(t("Close"))
                                             .on_click(|_, window, _| window.remove_window()),
                                     )
@@ -979,10 +1109,12 @@ impl Render for SettingsView {
                                             .label(t("Save"))
                                             .disabled(
                                                 self.recording.is_some()
+                                                    || self.saving
+                                                    || self.api_key_loading
                                                     || !self.shortcuts.complete(),
                                             )
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.save(cx);
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.save(window, cx);
                                             })),
                                     ),
                             ),
@@ -993,7 +1125,10 @@ impl Render for SettingsView {
 }
 
 impl SettingsView {
-    fn advance_onboarding(&mut self, cx: &mut Context<Self>) {
+    fn advance_onboarding(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.saving {
+            return;
+        }
         let step = self.onboarding_step.unwrap_or(0);
         if (1..=3).contains(&step)
             && let Err(error) = self.values(cx)
@@ -1002,7 +1137,8 @@ impl SettingsView {
             cx.notify();
             return;
         }
-        if step == 4 && !self.save(cx) {
+        if step == 4 {
+            self.save(window, cx);
             return;
         }
         self.set_onboarding_step(step + 1, cx);
@@ -1021,7 +1157,12 @@ impl SettingsView {
         cx.notify();
     }
 
-    pub fn smoke_onboarding_step(&mut self, step: usize, cx: &mut Context<Self>) {
+    pub fn smoke_onboarding_step(
+        &mut self,
+        step: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         assert!(step <= 5, "Smoke diagnostics must never save setup");
         if step == 5 {
             assert_eq!(self.onboarding_step, Some(4));
@@ -1035,7 +1176,7 @@ impl SettingsView {
             assert_eq!(self.onboarding_step, Some(0));
         } else {
             assert_eq!(self.onboarding_step, Some(step - 1));
-            self.advance_onboarding(cx);
+            self.advance_onboarding(window, cx);
             assert_eq!(self.onboarding_step, Some(step));
         }
     }
@@ -1215,7 +1356,7 @@ impl SettingsView {
                 Button::new("onboarding-back")
                     .ghost()
                     .label(t("Back"))
-                    .disabled(self.recording.is_some())
+                    .disabled(self.recording.is_some() || self.saving)
                     .on_click(cx.listener(|this, _, _, cx| {
                         let step = this.onboarding_step.unwrap_or(1).saturating_sub(1);
                         this.set_onboarding_step(step, cx);
@@ -1231,12 +1372,16 @@ impl SettingsView {
                     5 => "Let's go",
                     _ => "Next",
                 }))
-                .disabled(self.recording.is_some())
+                .disabled(
+                    self.recording.is_some()
+                        || self.saving
+                        || (step > 0 && step < 5 && self.api_key_loading),
+                )
                 .on_click(cx.listener(|this, _, window, cx| {
                     if this.onboarding_step == Some(5) {
                         window.remove_window();
                     } else {
-                        this.advance_onboarding(cx);
+                        this.advance_onboarding(window, cx);
                     }
                 })),
         );
@@ -1439,6 +1584,7 @@ impl SettingsView {
             )
             .child(
                 Button::new(id)
+                    .disabled(self.saving)
                     .label(t(if self.recording == Some(mode) {
                         "Press the shortcut…"
                     } else {

@@ -30,6 +30,7 @@ pub struct Controller {
     preview_window: Option<(AnyWindowHandle, WeakEntity<Preview>)>,
     status_window: Option<(AnyWindowHandle, WeakEntity<StatusView>)>,
     session_active: bool,
+    persistence_active: bool,
     smoke_layout_check: bool,
 }
 
@@ -205,6 +206,7 @@ impl Controller {
             preview_window: None,
             status_window: None,
             session_active: false,
+            persistence_active: false,
             smoke_layout_check: false,
         })
     }
@@ -267,10 +269,15 @@ impl Controller {
         }
         while let Ok(event) = MenuEvent::receiver().try_recv() {
             if event.id == *self.tray.quit_id() {
-                cx.quit();
+                if !self.persistence_active {
+                    cx.quit();
+                }
             } else if event.id == *self.tray.settings_id() {
                 self.open_settings(None, cx);
             } else if event.id == *self.tray.enabled_id() {
+                if self.persistence_active {
+                    continue;
+                }
                 if !self.settings.onboarding_completed {
                     self.open_settings(None, cx);
                     continue;
@@ -331,7 +338,7 @@ impl Controller {
             self.open_settings(None, cx);
             return;
         }
-        if self.session_active {
+        if self.session_active || self.persistence_active {
             return;
         }
         if let Some((handle, _)) = &self.preview_window {
@@ -366,26 +373,17 @@ impl Controller {
             self.open_settings(Some(format!("{}: {error}", t("Status window"))), cx);
             return;
         }
-        let quick_key = if mode.quick() {
-            match settings::load_api_key(&settings.base_url) {
-                Ok(key) => Some(key),
-                Err(error) => {
-                    self.set_status(
-                        format!("{} : {error}", mode.operation().quick_title()),
-                        true,
-                        true,
-                        cx,
-                    );
-                    return;
-                }
-            }
-        } else {
-            None
-        };
         self.session_active = true;
-        let capture = self
-            .runtime
-            .spawn_blocking(move || desktop::capture(target));
+        let endpoint = settings.base_url.clone();
+        let capture = self.runtime.spawn_blocking(move || -> Result<_> {
+            let selection = desktop::capture(target)?;
+            let key = if mode.quick() {
+                Some(settings::load_api_key(&endpoint)?)
+            } else {
+                None
+            };
+            Ok((selection, key))
+        });
         cx.spawn(async move |this, cx| {
             let result = capture
                 .await
@@ -394,7 +392,7 @@ impl Controller {
             let _ = this.update(cx, |this, cx| {
                 this.session_active = false;
                 match result {
-                    Ok(selection) => match quick_key {
+                    Ok((selection, quick_key)) => match quick_key {
                         Some(key) => this.quick_translate_with_key(
                             selection,
                             settings,
@@ -666,10 +664,7 @@ impl Controller {
         }
         let settings = self.settings.clone();
         let onboarding = !settings.onboarding_completed;
-        let provider_configured = self
-            .store
-            .load()
-            .is_ok_and(|saved| saved.is_some_and(|settings| settings.validate().is_ok()));
+        let provider_configured = settings.onboarding_completed && settings.validate().is_ok();
         let controller = cx.entity().downgrade();
         // Use the launch/tray-click monitor for both placement and DPI conversion.
         let display_id = desktop::cursor_monitor()
@@ -743,7 +738,7 @@ impl Controller {
                         .is_ok_and(crate::platform::linux::x11::smoke_window_has_icon),
                     "Onboarding must expose the fixed app logo to the X11 taskbar"
                 );
-                view.update(cx, |view, cx| view.smoke_onboarding_step(step, cx))
+                view.update(cx, |view, cx| view.smoke_onboarding_step(step, window, cx))
                     .expect("Setup view must exist");
             })
             .expect("Setup window must remain open");
@@ -760,14 +755,24 @@ impl Controller {
             .expect("Setup window must close");
     }
 
-    pub fn save_settings(&mut self, next: Settings, key: &str) -> Result<()> {
+    pub fn save_settings(
+        &mut self,
+        next: Settings,
+        key: String,
+        cx: &mut Context<Self>,
+    ) -> Result<Task<Result<()>>> {
+        self.ensure_persistence_idle()?;
         next.validate()?;
         next.validate_hotkeys()?;
-        self.hotkey.change_with(next.shortcuts(), || {
+        let pending = self.hotkey.prepare_change(next.shortcuts())?;
+        self.persistence_active = true;
+        let store = self.store.clone();
+        let saved = next.clone();
+        let task = self.runtime.spawn_blocking(move || {
             startup::configure(next.launch_at_startup, || {
                 let old_key = settings::load_api_key(&next.base_url)?;
-                settings::save_api_key(&next.base_url, key)?;
-                if let Err(error) = self.store.save(&next) {
+                settings::save_api_key(&next.base_url, &key)?;
+                if let Err(error) = store.save(&next) {
                     if let Err(rollback) = settings::save_api_key(&next.base_url, &old_key) {
                         let message = format!(
                             "{error:#}. {}: {rollback:#}",
@@ -779,20 +784,82 @@ impl Controller {
                 }
                 Ok(())
             })
-        })?;
-        self.settings = next;
-        self.tray.set_enabled(true);
+        });
+        Ok(cx.spawn(async move |this, cx| {
+            let result = task
+                .await
+                .context(t("The settings service failed"))
+                .and_then(|result| result);
+            this.update(cx, |this, _| {
+                this.persistence_active = false;
+                this.hotkey.finish_change(pending, result)?;
+                this.settings = saved;
+                this.tray.set_enabled(true);
+                Ok(())
+            })?
+        }))
+    }
+
+    fn ensure_persistence_idle(&self) -> Result<()> {
+        if self.persistence_active {
+            anyhow::bail!(t("A settings save is already in progress."));
+        }
         Ok(())
     }
 
-    pub fn set_theme(&mut self, theme: ThemePreference, cx: &mut Context<Self>) -> Result<()> {
-        self.settings = self.store.save_theme(&self.settings, theme)?;
-        crate::ui::theme::apply(theme, cx);
-        Ok(())
+    pub fn set_theme(
+        &mut self,
+        theme: ThemePreference,
+        cx: &mut Context<Self>,
+    ) -> Result<Task<Result<()>>> {
+        self.ensure_persistence_idle()?;
+        self.persistence_active = true;
+        let store = self.store.clone();
+        let saved = self.settings.clone();
+        let task = self
+            .runtime
+            .spawn_blocking(move || store.save_theme(&saved, theme));
+        Ok(cx.spawn(async move |this, cx| {
+            let result = task
+                .await
+                .context(t("The settings service failed"))
+                .and_then(|result| result);
+            this.update(cx, |this, cx| {
+                this.persistence_active = false;
+                this.settings = result?;
+                crate::ui::theme::apply(theme, cx);
+                Ok(())
+            })?
+        }))
     }
 
-    pub fn set_language(&mut self, language: UiLanguage, cx: &mut Context<Self>) -> Result<()> {
-        self.settings = self.store.save_language(&self.settings, language)?;
+    pub fn set_language(
+        &mut self,
+        language: UiLanguage,
+        cx: &mut Context<Self>,
+    ) -> Result<Task<Result<()>>> {
+        self.ensure_persistence_idle()?;
+        self.persistence_active = true;
+        let store = self.store.clone();
+        let saved = self.settings.clone();
+        let task = self
+            .runtime
+            .spawn_blocking(move || store.save_language(&saved, language));
+        Ok(cx.spawn(async move |this, cx| {
+            let result = task
+                .await
+                .context(t("The settings service failed"))
+                .and_then(|result| result);
+            this.update(cx, |this, cx| {
+                this.persistence_active = false;
+                this.settings = result?;
+                this.apply_language(language, cx);
+                Ok(())
+            })?
+        }))
+    }
+
+    fn apply_language(&mut self, language: UiLanguage, cx: &mut Context<Self>) {
         crate::i18n::apply(language);
         gpui_kit::component::set_locale(if t("Settings") == "Settings" {
             "en"
@@ -802,7 +869,7 @@ impl Controller {
         self.tray.localize();
         let preview = self.preview_window.clone();
         let status = self.status_window.clone();
-        // The caller holds the SettingsView lease until this update returns.
+        // Update other windows after releasing this Controller entity lease.
         cx.defer(move |cx| {
             if let Some((handle, view)) = preview {
                 let _ = handle.update(cx, |_, window, cx| {
@@ -814,6 +881,5 @@ impl Controller {
             }
         });
         cx.refresh_windows();
-        Ok(())
     }
 }

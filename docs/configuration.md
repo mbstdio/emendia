@@ -11,6 +11,13 @@
 - Selected text, generated results and API keys are not written to the settings JSON. Diagnostic logs do not include selected text, keys or raw provider error bodies.
 - After **Copy** or successful **Replace**, the result remains in the clipboard.
 
+Keyring access and settings writes run in background workers. Provider URL edits
+wait for a short pause before loading a saved key; late loads cannot overwrite a
+different provider's key or a manually edited draft. Saving keeps the previous
+shortcuts reserved until persistence succeeds, and restores the previous state
+on failure. Settings controls and window closure are temporarily disabled while
+a save completes.
+
 ## Single instance
 
 On Windows and Linux, only one Emendia instance can run per configuration profile.

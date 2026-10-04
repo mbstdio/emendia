@@ -255,15 +255,6 @@ impl Preview {
                 });
             }
         }
-        let key = match settings::load_api_key(&settings.base_url) {
-            Ok(key) => key,
-            Err(error) => {
-                self.busy = false;
-                self.status = error.to_string();
-                cx.notify();
-                return;
-            }
-        };
         self.busy = true;
         self.status = if alternative {
             t("Generating a new suggestion…")
@@ -273,6 +264,10 @@ impl Preview {
         .into();
         let operation = self.operation;
         let task = self.runtime.spawn(async move {
+            let endpoint = settings.base_url.clone();
+            let key = tokio::task::spawn_blocking(move || settings::load_api_key(&endpoint))
+                .await
+                .map_err(|_| anyhow::anyhow!(t("Unable to read the API key")))??;
             translator
                 .process(&settings, &key, &original, previous.as_deref(), operation)
                 .await
