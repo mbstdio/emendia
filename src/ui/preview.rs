@@ -19,6 +19,11 @@ use gpui_kit::{
 use std::{cell::RefCell, rc::Rc};
 use tokio::{runtime::Handle, task::AbortHandle};
 
+struct PreviewDraft {
+    configuration: (String, String, CorrectionStyle),
+    text: Entity<TextareaState>,
+}
+
 pub struct Preview {
     selection: Selection,
     settings: Settings,
@@ -29,6 +34,7 @@ pub struct Preview {
     target: LanguageSelect,
     operation: Operation,
     translation: Entity<TextareaState>,
+    drafts: Vec<PreviewDraft>,
     status: String,
     busy: bool,
     replacing: bool,
@@ -147,7 +153,11 @@ impl Preview {
                 window,
                 |this, _, event: &SelectEvent<Vec<String>>, window, cx| {
                     if let SelectEvent::Confirm(Some(language)) = event {
-                        this.settings.source_language = canonical_language(language).to_owned();
+                        let language = canonical_language(language);
+                        if language == this.settings.source_language {
+                            return;
+                        }
+                        this.settings.source_language = language.to_owned();
                         this.translate(false, window, cx);
                     }
                 },
@@ -157,12 +167,24 @@ impl Preview {
                 window,
                 |this, _, event: &SelectEvent<Vec<String>>, window, cx| {
                     if let SelectEvent::Confirm(Some(language)) = event {
-                        this.settings.target_language = canonical_language(language).to_owned();
+                        let language = canonical_language(language);
+                        if language == this.settings.target_language {
+                            return;
+                        }
+                        this.settings.target_language = language.to_owned();
                         this.translate(false, window, cx);
                     }
                 },
             ),
         ];
+        let drafts = vec![PreviewDraft {
+            configuration: (
+                settings.source_language.clone(),
+                settings.target_language.clone(),
+                settings.correction_style,
+            ),
+            text: translation.clone(),
+        }];
         Self {
             selection,
             settings,
@@ -173,6 +195,7 @@ impl Preview {
             target,
             operation,
             translation,
+            drafts,
             status: operation.pending().into(),
             busy: false,
             replacing: false,
@@ -208,10 +231,29 @@ impl Preview {
         let settings = self.settings.clone();
         let original = self.selection.text.clone();
         let previous = alternative.then(|| self.translation.read(cx).value().to_string());
-        // A language change invalidates the old result; it must never remain replaceable.
+        // Each language/style combination owns its editor and undo history. An
+        // old-language result is recoverable by returning to that combination,
+        // but is never shown or replaceable as a result for another language.
         if !alternative {
-            self.translation
-                .update(cx, |state, cx| state.set_value("", window, cx));
+            let configuration = (
+                settings.source_language.clone(),
+                settings.target_language.clone(),
+                settings.correction_style,
+            );
+            if let Some(draft) = self
+                .drafts
+                .iter()
+                .find(|draft| draft.configuration == configuration)
+            {
+                self.translation = draft.text.clone();
+            } else {
+                self.translation = cx
+                    .new(|cx| TextareaState::new(window, cx).placeholder(self.operation.pending()));
+                self.drafts.push(PreviewDraft {
+                    configuration,
+                    text: self.translation.clone(),
+                });
+            }
         }
         let key = match settings::load_api_key(&settings.base_url) {
             Ok(key) => key,
@@ -247,7 +289,7 @@ impl Preview {
                 match result {
                     Ok(Ok(text)) => {
                         this.translation
-                            .update(cx, |state, cx| state.set_value(text, window, cx));
+                            .update(cx, |state, cx| state.replace_all(text, window, cx));
                         this.status = t("Ready — you can edit the result before replacing.").into();
                     }
                     Ok(Err(error)) => this.status = error.to_string(),

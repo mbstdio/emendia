@@ -17,6 +17,7 @@ use gpui_kit::{
     },
     *,
 };
+use std::collections::HashMap;
 use tokio::task::AbortHandle;
 
 const PROVIDERS: &[&str] = &["OpenAI", "LM Studio", "Ollama", "Custom"];
@@ -154,6 +155,8 @@ pub struct SettingsView {
     base_url: Entity<InputState>,
     model: Entity<InputState>,
     api_key: Entity<InputState>,
+    api_key_endpoint: String,
+    api_key_drafts: HashMap<String, String>,
     source: LanguageSelect,
     target: LanguageSelect,
     shortcuts: ShortcutDraft,
@@ -418,6 +421,8 @@ impl SettingsView {
             base_url,
             model,
             api_key,
+            api_key_endpoint: settings::normalize_endpoint(&settings.base_url).to_owned(),
+            api_key_drafts: HashMap::new(),
             source,
             target,
             shortcuts: ShortcutDraft::new(&settings),
@@ -446,8 +451,23 @@ impl SettingsView {
     }
 
     fn reload_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let url = self.base_url.read(cx).value().to_string();
-        match settings::load_api_key(settings::normalize_endpoint(&url)) {
+        let url = settings::normalize_endpoint(self.base_url.read(cx).value().as_ref()).to_owned();
+        if url == self.api_key_endpoint {
+            return;
+        }
+        // Drafts stay in this form only. Switching providers must not discard an
+        // edited key, and cosmetic URL changes must not reload a saved credential.
+        self.api_key_drafts.insert(
+            self.api_key_endpoint.clone(),
+            self.api_key.read(cx).value().to_string(),
+        );
+        let key = if let Some(key) = self.api_key_drafts.get(&url) {
+            Ok(key.clone())
+        } else {
+            settings::load_api_key(&url)
+        };
+        self.api_key_endpoint = url;
+        match key {
             Ok(key) => self
                 .api_key
                 .update(cx, |state, cx| state.set_value(key, window, cx)),
