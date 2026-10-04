@@ -301,6 +301,8 @@ catalog! {
         "Unable to preserve the clipboard" => "Impossible de préserver le presse-papiers",
         "Unable to preserve a clipboard format; capture cancelled." => "Impossible de préserver un format du presse-papiers ; capture annulée.",
         "The clipboard was modified by another application." => "Le presse-papiers a été modifié par une autre application.",
+        "Unable to verify the clipboard source; capture cancelled." => "Impossible de vérifier l’origine du presse-papiers ; capture annulée.",
+        "X-Resource 1.2 is required to verify the clipboard source." => "X-Resource 1.2 est nécessaire pour vérifier l’origine du presse-papiers.",
         "The copied selection is not Unicode text" => "La sélection copiée n’est pas du texte Unicode",
         "Unable to read the clipboard." => "Impossible de lire le presse-papiers.",
         "The copied text is not valid Unicode" => "Le texte copié n’est pas un Unicode valide",

@@ -78,6 +78,11 @@ incremental (INCR) transfers. Snapshots are limited to 32 formats and 16 MiB tot
 capture stops if a format cannot be preserved. Restoration is conditional on the
 clipboard owner and selection timestamp remaining unchanged.
 
+Capture requires X-Resource 1.2 and a server-reported local process identity for
+the source window and clipboard owner. Publications from another process,
+including a clipboard manager relaying a copy, are rejected rather than sent to
+the provider. If the source cannot be verified, capture is cancelled.
+
 Before **Replace**, Emendia requests activation of the original window and checks
 the window ID, PID when exposed, title, focused X window and selected text. Quick
 actions cancel if focus has changed. The result remains available in the preview

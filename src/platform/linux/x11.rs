@@ -14,6 +14,7 @@ use x11rb::{
     connection::{Connection, RequestConnection},
     protocol::{
         randr::ConnectionExt as _,
+        res::{ClientIdMask, ClientIdSpec, ConnectionExt as _},
         xproto::{
             self, AtomEnum, ChangeWindowAttributesAux, ClientMessageEvent, ConfigureWindowAux,
             ConnectionExt as _, EventMask, MapState, PropMode, StackMode, Window,
@@ -259,6 +260,27 @@ impl Desktop {
             ));
         }
         Ok(())
+    }
+
+    fn client_process(&self, window: Window) -> Result<u32> {
+        // Ask the server, not the client-supplied _NET_WM_PID property. Clipboard
+        // owners are often hidden windows without any window-manager properties.
+        let reply = self
+            .connection
+            .res_query_client_ids(&[ClientIdSpec {
+                client: window,
+                mask: ClientIdMask::LOCAL_CLIENT_PID,
+            }])?
+            .reply()?;
+        reply
+            .ids
+            .iter()
+            .find(|id| id.spec.mask == ClientIdMask::LOCAL_CLIENT_PID)
+            .and_then(|id| id.value.first().copied())
+            .filter(|process| *process != 0)
+            .context(crate::i18n::t(
+                "Unable to verify the clipboard source; capture cancelled.",
+            ))
     }
 
     fn wait_modifiers(&self) -> Result<()> {
@@ -527,6 +549,19 @@ pub(crate) fn status_placement_for_window(_window: isize) -> Result<Placement> {
 }
 
 fn copy_selection(desktop: &Desktop, destination: &Destination) -> Result<String> {
+    // Fail before touching the clipboard when server-side attribution is unavailable.
+    let attribution_error =
+        crate::i18n::t("X-Resource 1.2 is required to verify the clipboard source.");
+    let version = desktop
+        .connection
+        .res_query_version(1, 2)
+        .context(attribution_error)?
+        .reply()
+        .context(attribution_error)?;
+    if (version.server_major, version.server_minor) < (1, 2) {
+        bail!(attribution_error);
+    }
+    let expected_process = desktop.client_process(destination.window)?;
     let mut reader = Reader::new()?;
     let (before, snapshot) = reader.snapshot()?;
     desktop.check(destination)?;
@@ -537,6 +572,14 @@ fn copy_selection(desktop: &Desktop, destination: &Destination) -> Result<String
         desktop.check(destination)?;
         desktop.send_ctrl(b'c' as u32)?;
         let copied = reader.wait_for_copy(reserved, || desktop.check(destination))?;
+        if desktop.client_process(copied.owner)? != expected_process {
+            bail!(crate::i18n::t(
+                "The clipboard was modified by another application."
+            ));
+        }
+        if reader.stamp()? != copied {
+            bail!("The clipboard changed while verifying the selection source");
+        }
         let text = reader.text()?;
         desktop.check(destination)?;
         if reader.stamp()? != copied {
