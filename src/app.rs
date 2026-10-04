@@ -14,6 +14,8 @@ use anyhow::{Context as _, Result};
 use global_hotkey::HotKeyState;
 use gpui_kit::*;
 use std::time::Duration;
+#[cfg(target_os = "linux")]
+use std::{cell::Cell, rc::Rc};
 use tokio::runtime::Runtime;
 use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent, menu::MenuEvent};
 
@@ -33,7 +35,7 @@ pub struct Controller {
 
 impl Controller {
     #[cfg(target_os = "linux")]
-    pub fn open_shortcut_smoke(&mut self, cx: &mut Context<Self>) {
+    pub fn open_shortcut_smoke(&mut self, completion: Rc<Cell<bool>>, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             for source in TranslationMode::ALL {
                 for target in TranslationMode::ALL {
@@ -80,6 +82,7 @@ impl Controller {
             }
             cx.update(|cx| {
                 tracing::info!("X11 shortcut smoke test: all 12 action transfers, registered-key capture and unsaved reverse transfers verified");
+                completion.set(true);
                 cx.quit();
             });
         }).detach();

@@ -3,13 +3,17 @@
     windows_subsystem = "windows"
 )]
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use emendia::{
     app::Controller,
     settings::{Operation, Settings, SettingsStore},
     translation::Translator,
 };
 use gpui_kit::*;
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 struct AppController {
     _controller: Entity<Controller>,
@@ -30,17 +34,11 @@ fn main() {
 }
 
 fn run() -> Result<()> {
-    let store = SettingsStore::new()?;
-    let Some(_instance) =
-        emendia::platform::single_instance::acquire(&store.path().with_file_name("instance.lock"))?
-    else {
-        tracing::info!("Emendia is already running");
-        return Ok(());
-    };
-    emendia::platform::initialize()?;
     let smoke_onboarding = std::env::args().any(|argument| argument == "--smoke-test-onboarding");
-    let smoke_shortcuts = cfg!(target_os = "linux")
-        && std::env::args().any(|argument| argument == "--smoke-test-shortcuts");
+    let smoke_shortcuts = std::env::args().any(|argument| argument == "--smoke-test-shortcuts");
+    if smoke_shortcuts && !cfg!(target_os = "linux") {
+        bail!("Shortcut smoke diagnostics require Linux X11");
+    }
     let smoke_correction = std::env::args().any(|argument| {
         matches!(
             argument.as_str(),
@@ -58,6 +56,17 @@ fn run() -> Result<()> {
         || smoke_correction
         || smoke_quick
         || std::env::args().any(|argument| argument == "--smoke-test");
+    let store = SettingsStore::new()?;
+    let Some(_instance) =
+        emendia::platform::single_instance::acquire(&store.path().with_file_name("instance.lock"))?
+    else {
+        if smoke_test {
+            bail!("Unable to run smoke diagnostics: Emendia is already running for this profile");
+        }
+        tracing::info!("Emendia is already running");
+        return Ok(());
+    };
+    emendia::platform::initialize()?;
     let show_settings = std::env::args().any(|argument| argument == "--settings");
     if smoke_test {
         // Graphical diagnostics must not depend on or access the user's keyring.
@@ -105,6 +114,10 @@ fn run() -> Result<()> {
         .enable_all()
         .build()?;
     let translator = Translator::new()?;
+    let startup_error = Rc::new(RefCell::new(None));
+    let startup_error_writer = startup_error.clone();
+    let smoke_complete = Rc::new(Cell::new(!smoke_test));
+    let completion = smoke_complete.clone();
     gpui_kit::application()
         .with_assets(gpui_kit::assets::AllAssets)
         .run(move |cx| {
@@ -116,8 +129,8 @@ fn run() -> Result<()> {
                 controller.update(cx, |controller, cx| {
                     controller.start(first_run || smoke_test || show_settings, error, cx);
                        #[cfg(target_os = "linux")]
-                       if smoke_shortcuts {
-                           controller.open_shortcut_smoke(cx);
+                        if smoke_shortcuts {
+                            controller.open_shortcut_smoke(completion.clone(), cx);
                        }
                        if smoke_test && !smoke_onboarding && !smoke_shortcuts {
                           // Let the initial Settings window finish its foreground activation
@@ -145,7 +158,8 @@ fn run() -> Result<()> {
                             cx.update(|cx| {
                                 tracing::info!("GPUI onboarding smoke test: sole setup window, all five steps and backward navigation verified without saving");
                                 let controller = cx.global::<AppController>()._controller.clone();
-                                controller.update(cx, |controller, cx| controller.smoke_close_onboarding(cx));
+                                 controller.update(cx, |controller, cx| controller.smoke_close_onboarding(cx));
+                                 completion.set(true);
                             });
                             cx.background_executor().timer(std::time::Duration::from_secs(1)).await;
                             panic!("Closing incomplete onboarding must quit Emendia completely");
@@ -164,16 +178,18 @@ fn run() -> Result<()> {
                                 tracing::info!(
                                 "GPUI smoke test: settings, translated preview, tray and event loop active"
                                 );
-                                 if !smoke_quick {
-                                     cx.quit();
+                                  if !smoke_quick {
+                                      completion.set(true);
+                                      cx.quit();
                                  }
                              });
                              if smoke_quick {
                                  cx.background_executor().timer(std::time::Duration::from_secs(4)).await;
                                  cx.update(|cx| {
                                      assert!(cx.global::<AppController>()._controller.read(cx).smoke_status_closed(), "The error popup must close automatically");
-                                     assert!(cx.global::<AppController>()._controller.read(cx).smoke_preview_complete(cx), "The result must remain available after the error popup closes");
-                                     cx.quit();
+                                      assert!(cx.global::<AppController>()._controller.read(cx).smoke_preview_complete(cx), "The result must remain available after the error popup closes");
+                                      completion.set(true);
+                                      cx.quit();
                                  });
                              }
                         })
@@ -182,9 +198,17 @@ fn run() -> Result<()> {
                 }
                 Err(error) => {
                     tracing::error!(%error, "Unable to initialize desktop integration");
+                    *startup_error_writer.borrow_mut() =
+                        Some(error.context("Unable to initialize desktop integration"));
                     cx.quit();
                 }
             }
         });
+    if let Some(error) = startup_error.borrow_mut().take() {
+        return Err(error);
+    }
+    if !smoke_complete.get() {
+        bail!("Smoke diagnostics exited before completing all checks");
+    }
     Ok(())
 }

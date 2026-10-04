@@ -119,6 +119,11 @@ Onboarding smoke diagnostics verify that only the setup assistant opens, walk th
 
 Other smoke tests open settings, a preview with sample text and the tray, then quit after three seconds, or seven seconds for quick flows. They verify provider results, compact preview layout, non-activating status behavior, wrapping and automatic error-popup closure. Quick flows also verify recovery after a simulated paste failure without another request. These diagnostics do not have a real replacement destination or save form settings.
 
+Smoke diagnostics return a nonzero exit code if desktop initialization fails,
+another instance owns the profile, or the application exits before all checks
+complete. A normal second launch still exits successfully. Shortcut diagnostics
+require Linux X11.
+
 An additional Windows test launches an isolated native editor and checks capture, paste, focus preservation and clipboard restoration for text and bitmap. It requires an interactive desktop and temporarily uses focus and the clipboard; do not interact with another application during the test:
 
 ```powershell
