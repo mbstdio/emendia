@@ -253,6 +253,7 @@ catalog! {
         "Unable to access the system keyring" => "Accès au trousseau du système impossible",
         "Unable to read the API key" => "Impossible de lire la clé API",
         "Unable to save the API key" => "Impossible d’enregistrer la clé API",
+        "Unable to restore the previous API key; check the saved credential." => "Impossible de restaurer la clé API précédente ; vérifie la clé enregistrée.",
         "No text to process." => "Aucun texte à traiter.",
         "Unable to connect to the provider (URL, network or timeout)" => "Connexion au provider impossible (URL, réseau ou délai d’attente)",
         "Incompatible response: expected chat/completions JSON" => "Réponse incompatible : JSON chat/completions attendu",

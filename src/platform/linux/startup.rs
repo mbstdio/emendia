@@ -47,7 +47,13 @@ fn configure_at(
     let next = executable.map(desktop_entry).transpose()?;
     write_entry(path, next.as_deref().map(str::as_bytes))?;
     if let Err(error) = persist() {
-        write_entry(path, previous.as_deref()).context("Unable to restore startup registration")?;
+        if let Err(rollback) = write_entry(path, previous.as_deref()) {
+            let message = format!(
+                "{error:#}. {}: {rollback:#}",
+                crate::i18n::t("Unable to restore startup registration")
+            );
+            return Err(error.context(message));
+        }
         return Err(error);
     }
     Ok(())

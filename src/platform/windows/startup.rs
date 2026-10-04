@@ -58,12 +58,20 @@ fn configure_at(
     write_entry(&subkey, command)?;
     let result = write_named_entry(&subkey, "TranslationTool", None).and_then(|_| persist());
     if let Err(error) = result {
-        write_named_entry(&subkey, "TranslationTool", legacy.as_deref())?;
+        let mut failures = Vec::new();
+        if let Err(rollback) = write_named_entry(&subkey, "TranslationTool", legacy.as_deref()) {
+            failures.push(format!("TranslationTool: {rollback:#}"));
+        }
         if let Err(rollback) = write_entry(&subkey, previous.as_deref()) {
-            return Err(error.context(format!(
-                "{}: {rollback:#}",
-                t("Unable to restore startup registration")
-            )));
+            failures.push(format!("Emendia: {rollback:#}"));
+        }
+        if !failures.is_empty() {
+            let message = format!(
+                "{error:#}. {}: {}",
+                t("Unable to restore startup registration"),
+                failures.join(" ; ")
+            );
+            return Err(error.context(message));
         }
         return Err(error);
     }

@@ -222,11 +222,12 @@ fn update_registration(
             }
         }
         if !cleanup_errors.is_empty() {
-            return Err(error.context(format!(
-                "{}: {}",
+            let message = format!(
+                "{error:#}. {}: {}",
                 crate::i18n::t("Incomplete cleanup of new shortcuts"),
                 cleanup_errors.join(" ; ")
-            )));
+            );
+            return Err(error.context(message));
         }
         return Err(error);
     }

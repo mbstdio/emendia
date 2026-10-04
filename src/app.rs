@@ -765,7 +765,13 @@ impl Controller {
                 let old_key = settings::load_api_key(&next.base_url)?;
                 settings::save_api_key(&next.base_url, key)?;
                 if let Err(error) = self.store.save(&next) {
-                    let _ = settings::save_api_key(&next.base_url, &old_key);
+                    if let Err(rollback) = settings::save_api_key(&next.base_url, &old_key) {
+                        let message = format!(
+                            "{error:#}. {}: {rollback:#}",
+                            t("Unable to restore the previous API key; check the saved credential.")
+                        );
+                        return Err(error.context(message));
+                    }
                     return Err(error);
                 }
                 Ok(())
