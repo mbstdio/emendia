@@ -536,6 +536,8 @@ impl SettingsView {
     }
 
     fn save(&mut self, cx: &mut Context<Self>) -> bool {
+        // A late connection response must never overwrite the save outcome.
+        self.cancel_test();
         let result = self.values(cx).and_then(|(settings, key)| {
             self.controller
                 .update(cx, |app, _| app.save_settings(settings, &key))?
