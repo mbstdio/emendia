@@ -257,6 +257,8 @@ catalog! {
         "No text to process." => "Aucun texte à traiter.",
         "Unable to connect to the provider (URL, network or timeout)" => "Connexion au provider impossible (URL, réseau ou délai d’attente)",
         "Incompatible response: expected chat/completions JSON" => "Réponse incompatible : JSON chat/completions attendu",
+        "The provider response exceeds the 4 MiB limit." => "La réponse du provider dépasse la limite de 4 Mio.",
+        "Unable to read the provider response" => "Impossible de lire la réponse du provider",
         "The provider returned no suggestions" => "Le provider n’a retourné aucune proposition",
         "The provider truncated the result. No replacement performed; reduce the selection or increase the provider's output limit." => "Le provider a tronqué le résultat. Aucun remplacement effectué ; réduisez la sélection ou augmentez la limite de sortie du provider.",
         "The provider filtered this result. No replacement performed." => "Le provider a filtré ce résultat. Aucun remplacement effectué.",

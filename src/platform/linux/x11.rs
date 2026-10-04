@@ -1,5 +1,6 @@
 //! X11 selection capture and replacement. Blocking work runs on Tokio workers.
 use super::clipboard::{self, Reader, atom};
+use crate::text::{MAX_TEXT_UNITS, validate_clipboard_text};
 use anyhow::{Context, Result, bail};
 use std::{
     sync::{
@@ -625,7 +626,7 @@ pub fn capture(target: CaptureTarget) -> Result<Selection> {
     if text.trim().is_empty() {
         bail!(crate::i18n::t("The selection contains no text."));
     }
-    if text.encode_utf16().count() > 100_000 {
+    if text.encode_utf16().count() > MAX_TEXT_UNITS {
         bail!(crate::i18n::t(
             "Selection too long (maximum 100,000 UTF-16 code units)."
         ));
@@ -645,6 +646,7 @@ pub fn replace_quick(selection: &Selection, text: &str) -> Result<()> {
 }
 
 fn replace_inner(selection: &Selection, text: &str, quick: bool) -> Result<()> {
+    validate_clipboard_text(text)?;
     let _operation = OPERATION
         .lock()
         .map_err(|_| anyhow::anyhow!("Clipboard service interrupted"))?;

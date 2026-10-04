@@ -69,6 +69,12 @@ Replacement is best-effort: some applications lose their selection after focus c
 
 Replacement inserts **plain text**; rich document formatting is not preserved. Popups are placed within the monitor's usable area, with cursor fallback when selection coordinates are unavailable.
 
+Provider responses are limited to 4 MiB, including responses without a declared
+length. Generated and edited results must contain no null character and must not
+exceed 100,000 UTF-16 code units on either platform. Invalid results are rejected
+before clipboard publication or replacement. Results explicitly reported as
+truncated, filtered or incomplete by the provider are also rejected.
+
 ### Linux X11 behavior
 
 Capture uses a fresh **Ctrl+C** publication of CLIPBOARD, rather than PRIMARY,

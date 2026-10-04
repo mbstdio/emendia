@@ -4,6 +4,8 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
+
 #[derive(Clone)]
 pub struct Translator {
     client: reqwest::Client,
@@ -137,7 +139,7 @@ impl Translator {
         if !api_key.is_empty() {
             request = request.bearer_auth(api_key);
         }
-        let response = request.send().await.context(t(
+        let mut response = request.send().await.context(t(
             "Unable to connect to the provider (URL, network or timeout)",
         ))?;
         let status = response.status();
@@ -155,9 +157,26 @@ impl Translator {
                 }
             );
         }
-        let completion: CompletionResponse = response
-            .json()
+        if response
+            .content_length()
+            .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
+        {
+            bail!(t("The provider response exceeds the 4 MiB limit."));
+        }
+        let mut body = Vec::new();
+        // Count actual bytes as well: Content-Length is optional and is not a
+        // reliable bound for chunked responses.
+        while let Some(chunk) = response
+            .chunk()
             .await
+            .context(t("Unable to read the provider response"))?
+        {
+            if chunk.len() > MAX_RESPONSE_BYTES - body.len() {
+                bail!(t("The provider response exceeds the 4 MiB limit."));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        let completion: CompletionResponse = serde_json::from_slice(&body)
             .context(t("Incompatible response: expected chat/completions JSON"))?;
         let choice = completion
             .choices
@@ -188,6 +207,7 @@ impl Translator {
         if text.trim().is_empty() {
             bail!(t("The provider returned empty text."));
         }
+        crate::text::validate_clipboard_text(&text)?;
         Ok(text)
     }
 }

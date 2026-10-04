@@ -376,6 +376,7 @@ pub(super) fn put(formats: Vec<Format>, expected: Option<Stamp>) -> Result<Stamp
 }
 
 pub(super) fn put_text(text: &str) -> Result<Stamp> {
+    crate::text::validate_clipboard_text(text)?;
     let (connection, _) = x11rb::connect(None)?;
     let mut formats = Vec::new();
     for name in ["UTF8_STRING", "text/plain;charset=utf-8", "text/plain"] {

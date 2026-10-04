@@ -1,5 +1,6 @@
 //! Windows-specific selection capture. All COM calls and clipboard transactions run on a
 //! dedicated worker; no sleep or cross-process accessibility call blocks GPUI's UI thread.
+use crate::text::{MAX_TEXT_UNITS, validate_clipboard_text};
 use anyhow::{Context, Result, bail};
 use std::{
     mem::size_of,
@@ -59,7 +60,6 @@ use windows::{
 };
 
 const UNICODE_TEXT: u32 = 13;
-const MAX_TEXT_UNITS: usize = 100_000;
 
 pub(crate) fn foreground_window() -> isize {
     unsafe { GetForegroundWindow().0 as isize }
@@ -426,6 +426,7 @@ pub fn replace_quick(selection: &Selection, text: &str) -> Result<()> {
 }
 
 fn replace_inner(selection: &Selection, text: &str, quick: bool) -> Result<()> {
+    validate_clipboard_text(text)?;
     let _operation = CLIPBOARD_OPERATION
         .lock()
         .map_err(|_| anyhow::anyhow!(crate::i18n::t("Clipboard service interrupted")))?;
@@ -872,11 +873,7 @@ fn read_capture(expected_process: u32) -> Result<(Result<String>, u32)> {
 }
 
 fn write_text(text: &str) -> Result<u32> {
-    if text.contains('\0') || text.encode_utf16().count() > MAX_TEXT_UNITS {
-        bail!(crate::i18n::t(
-            "The text contains a null character or exceeds 100,000 UTF-16 code units."
-        ));
-    }
+    validate_clipboard_text(text)?;
     let bytes: Vec<u8> = text
         .encode_utf16()
         .chain(Some(0))
