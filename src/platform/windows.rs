@@ -882,11 +882,17 @@ fn write_text(text: &str) -> Result<u32> {
         .chain(Some(0))
         .flat_map(u16::to_ne_bytes)
         .collect();
+    // Complete all allocation and copying before changing the user's clipboard.
+    // ClipboardFormat frees the prepared memory until Windows takes ownership.
+    let mut data = prepare_text(&bytes)?;
     let lock = ClipboardLock::acquire()?;
     unsafe {
         EmptyClipboard()?;
+        SetClipboardData(data.format, data.handle).context(crate::i18n::t(
+            "Unable to publish the result; the clipboard may be empty.",
+        ))?;
     }
-    set_format(UNICODE_TEXT, &bytes)?;
+    data.handle = HANDLE::default(); // ownership transferred only after success
     // Closing publishes synthesized text formats and can increment the sequence.
     // Re-open and verify our owner/content before returning the committed generation.
     drop(lock);
@@ -897,23 +903,23 @@ fn write_text(text: &str) -> Result<u32> {
     Ok(sequence)
 }
 
-fn set_format(format: u32, bytes: &[u8]) -> Result<()> {
+fn prepare_text(bytes: &[u8]) -> Result<ClipboardFormat> {
+    // SAFETY: The allocation is exactly bytes.len() bytes and GlobalLock is
+    // checked before writing. The RAII owner frees it on every failure path.
     unsafe {
         let memory = GlobalAlloc(GMEM_MOVEABLE, bytes.len())?;
+        let data = ClipboardFormat {
+            format: UNICODE_TEXT,
+            handle: HANDLE(memory.0),
+        };
         let pointer = GlobalLock(memory);
         if pointer.is_null() {
-            let _ = windows::Win32::Foundation::GlobalFree(memory);
             bail!(crate::i18n::t("Unable to allocate clipboard memory."));
         }
         std::ptr::copy_nonoverlapping(bytes.as_ptr(), pointer.cast::<u8>(), bytes.len());
         let _ = GlobalUnlock(memory);
-        if let Err(error) = SetClipboardData(format, HANDLE(memory.0)) {
-            let _ = windows::Win32::Foundation::GlobalFree(memory);
-            return Err(error.into());
-        }
-        // SetClipboardData now owns the global allocation.
+        Ok(data)
     }
-    Ok(())
 }
 
 struct ComApartment;

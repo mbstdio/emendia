@@ -311,6 +311,7 @@ catalog! {
         "The text contains a null character or exceeds 100,000 UTF-16 code units." => "Le texte à copier contient un caractère nul ou dépasse 100 000 caractères UTF-16.",
         "The clipboard changed while writing." => "Le presse-papiers a changé pendant l’écriture.",
         "Unable to allocate clipboard memory." => "Allocation presse-papiers impossible.",
+        "Unable to publish the result; the clipboard may be empty." => "Impossible de publier le résultat ; le presse-papiers peut être vide.",
         "The capture service failed" => "Le service de capture a échoué",
         "Unable to show the status window" => "Impossible d’afficher la fenêtre d’état",
         "The quick processing service failed" => "Le service de traitement rapide a échoué",
