@@ -397,8 +397,11 @@ impl SettingsView {
                 },
             ));
         }
-        let logo_size = ((if settings.onboarding_completed { 36. } else { 40. })
-            * window.scale_factor())
+        let logo_size = ((if settings.onboarding_completed {
+            36.
+        } else {
+            40.
+        }) * window.scale_factor())
         .round()
         .max(1.) as u32;
         Self {
@@ -705,8 +708,11 @@ impl Drop for SettingsView {
 
 impl Render for SettingsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let logo_size = ((if self.onboarding_step.is_some() { 40. } else { 36. })
-            * window.scale_factor())
+        let logo_size = ((if self.onboarding_step.is_some() {
+            40.
+        } else {
+            36.
+        }) * window.scale_factor())
         .round()
         .max(1.) as u32;
         if self.logo_size != logo_size {

@@ -22,6 +22,8 @@ pub fn acquire(path: &Path) -> Result<Option<File>> {
     match file.try_lock() {
         Ok(()) => Ok(Some(file)),
         Err(TryLockError::WouldBlock) => Ok(None),
-        Err(TryLockError::Error(error)) => Err(error).context("Unable to acquire the instance lock"),
+        Err(TryLockError::Error(error)) => {
+            Err(error).context("Unable to acquire the instance lock")
+        }
     }
 }
