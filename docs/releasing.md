@@ -10,6 +10,7 @@ Each release contains Windows and Linux x64 distributions:
 Emendia-v0.2.0-windows-x64.exe
 Emendia-v0.2.0-windows-x64-setup.exe
 Emendia-v0.2.0-linux-x64.tar.gz
+Emendia-v0.2.0-linux-x64.deb
 SHA256SUMS.txt
 ```
 
@@ -23,6 +24,12 @@ The Linux archive is built on Ubuntu 24.04 x64 (glibc 2.39 or newer). It include
 the executable, license, PNG icon, `.desktop` launcher and installation guide.
 It requires an X11 login session and the native runtime libraries listed in the
 [Linux distribution guide](../packaging/linux/README.md); it is not a static binary.
+
+The Linux `.deb` installs the same executable in `/usr/bin`, plus a system-wide
+launcher, icon, license and documentation. Library dependencies and their minimum
+versions are derived from the executable with `dpkg-shlibdeps`; APT installs them
+automatically. It targets Ubuntu 24.04 and compatible derivatives. Debian 13 has
+not yet been validated, and Debian 12 requires a build on an older base system.
 
 ## Publish a release
 
@@ -53,8 +60,8 @@ The current package version is `0.2.0`, so use `v0.2.0`. Ensure the tag includes
 7. Verify the absence of external CRT dependencies, generate SHA-256 checksums and save the distributions as Actions artifacts for 14 days.
 8. Generate English release notes with git-cliff 2.14.2 for the checked-out tag.
 9. Verify installation/update/uninstall on a clean GitHub-hosted `windows-2022` machine using the exact built files and the test script from the built commit.
-10. In parallel, build Linux on `ubuntu-24.04`, run formatting/Clippy/tests and X11 integration/graphical diagnostics under Xvfb/Openbox, then package the `.tar.gz` archive.
-11. After Windows build, installer verification and Linux build succeed, create or resume a draft, combine Windows/Linux SHA-256 entries, upload all four assets, then publish.
+10. In parallel, build Linux on `ubuntu-24.04`, run formatting/Clippy/tests and X11 integration/graphical diagnostics under Xvfb/Openbox, then package the `.tar.gz` archive and `.deb`. Verify Debian package installation and removal on the runner.
+11. After Windows build, installer verification and Linux build succeed, create or resume a draft, combine Windows/Linux SHA-256 entries, upload all five assets, then publish.
 
 The publication job uses GitHub's automatic token with `contents: write`. No personal access token or additional secret is needed. GitHub Actions must be enabled and repository or organization policies must allow these actions and release publication.
 
@@ -180,10 +187,14 @@ cargo build --release --locked
 EMENDIA_BINARY=target/release/emendia bash packaging/linux/test-x11.sh
 bash packaging/linux/package.sh v0.2.0
 sha256sum target/dist/Emendia-v0.2.0-linux-x64.tar.gz
+sha256sum target/dist/Emendia-v0.2.0-linux-x64.deb
 ```
 
-`desktop-file-utils` is required to validate the launcher. The archive is written
-to `target/dist`. Test it on a clean Ubuntu 24.04 X11 desktop, especially tray
+`desktop-file-utils` is required to validate the launcher, and `dpkg-dev` is required
+to derive dependencies and build the Debian package. Both distributions are written
+to `target/dist`, with checksums in `SHA256SUMS-linux.txt`. Prerelease and manual
+build versions use Debian's `~` separator so they sort before stable releases.
+Test them on a clean Ubuntu 24.04 X11 desktop, especially tray
 integration, keyring persistence and autostart, before publishing the first Linux
 release. The workflow checks linked dependencies with `ldd` and waits for all
 platform verification jobs before publication.

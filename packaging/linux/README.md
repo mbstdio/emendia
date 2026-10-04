@@ -3,6 +3,27 @@
 Built for Ubuntu 24.04 x64 (glibc 2.39 or newer), using GPUI's GPU rendering.
 Use an Xorg/X11 login session; Wayland sessions are not supported yet.
 
+Debian 13 may also be compatible, but has not yet been validated. Debian 12's
+glibc is too old for this build. The `.deb` format alone does not guarantee
+compatibility with every Debian-based distribution.
+
+## Debian package installation
+
+Download the `.deb` from Releases, then install it with APT so dependencies are
+resolved automatically:
+
+```sh
+sudo apt install ./Emendia-v0.2.0-linux-x64.deb
+```
+
+Use the downloaded filename for your version. Launch Emendia from the application
+menu or run `emendia`. The package installs the executable in `/usr/bin`, along
+with a system-wide launcher and icon. Install a newer `.deb` with the same command
+to upgrade. To uninstall, disable automatic startup in Settings, quit Emendia,
+then run `sudo apt remove emendia`. Settings and credentials are preserved.
+
+## Archive installation
+
 On Ubuntu 24.04, install the runtime dependencies:
 
 ```sh

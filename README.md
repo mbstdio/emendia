@@ -23,7 +23,12 @@ Windows release builds require Windows 10 version 1903 or newer (x64) and compat
 
 ### Linux x64 (X11)
 
-Download `Emendia-<version>-linux-x64.tar.gz` from Releases, extract it into a permanent directory, and run `./emendia`. Builds target Ubuntu 24.04 x64 (glibc 2.39 or newer) and require an **Xorg/X11 login session**. See the included README or [Linux distribution guide](packaging/linux/README.md) for runtime dependencies and launcher installation.
+Download a Linux build from Releases:
+
+- **Debian package:** download `Emendia-<version>-linux-x64.deb` and install with `sudo apt install ./Emendia-<version>-linux-x64.deb`. This installs the dependencies and application launcher.
+- **Archive:** extract `Emendia-<version>-linux-x64.tar.gz` into a permanent directory and run `./emendia`.
+
+Builds target Ubuntu 24.04 x64 (glibc 2.39 or newer) and require an **Xorg/X11 login session**. Debian 13 compatibility has not yet been validated; Debian 12 is not supported by this build. See the included README or [Linux distribution guide](packaging/linux/README.md) for runtime dependencies and installation details.
 
 API keys use Secret Service (GNOME Keyring or a compatible unlocked keyring). If the desktop has no tray host, Settings opens normally and closing the last window quits Emendia. Wayland sessions are not supported yet.
 
@@ -66,7 +71,7 @@ cargo build --release --locked
 ./target/release/emendia
 ```
 
-Create the distribution with `bash packaging/linux/package.sh v0.2.0`. Desktop integration requires X11, XTest and XFixes.
+Create the `.tar.gz` and `.deb` distributions with `bash packaging/linux/package.sh v0.2.0` (requires `dpkg-dev` and `desktop-file-utils`). Desktop integration requires X11, XTest and XFixes.
 
 ## Documentation
 
