@@ -31,7 +31,7 @@ Preset URLs and models remain editable. Changing the URL reloads the key associa
 
 ## Shortcuts
 
-See the [default shortcuts](../README.md#default-shortcuts). Change them in **Translation**, **Proofreading** or the centralized **Shortcuts** page; these pages share the same values.
+See the [default shortcuts](../README.md#keyboard-shortcuts). Change them in **Translation**, **Proofreading** or the centralized **Shortcuts** page; these pages share the same values.
 
 Save to activate changes. All four shortcuts must be distinct. If a new shortcut is already reserved, the previous shortcuts remain active. **Shortcuts enabled** in the tray menu toggles all four together.
 
