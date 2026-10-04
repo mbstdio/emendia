@@ -3,6 +3,7 @@ pub mod hotkey;
 pub(crate) mod icons;
 #[cfg(target_os = "linux")]
 pub mod linux;
+pub mod single_instance;
 pub mod startup;
 pub mod tray;
 #[cfg(target_os = "windows")]

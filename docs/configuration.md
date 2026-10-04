@@ -11,6 +11,21 @@
 - Selected text, generated results and API keys are not written to the settings JSON. Diagnostic logs do not include selected text, keys or raw provider error bodies.
 - After **Copy** or successful **Replace**, the result remains in the clipboard.
 
+## Single instance
+
+On Windows and Linux, only one Emendia instance can run per configuration profile.
+A second launch exits silently with a successful exit code, leaving the existing
+instance running. This also applies to `--settings`; use the tray icon to open
+Settings when Emendia is already running. Windows portable and installed builds
+share the same profile and instance lock.
+
+An exclusive operating-system lock on `instance.lock`, beside `settings.json`,
+is acquired before desktop initialization, configuration migration and shortcut
+registration. The lock is automatically released on exit, including after a crash
+or forced termination. The file remains on disk and does not prevent restarting;
+do not delete it while Emendia is running. If the lock cannot be opened or acquired
+because of an unexpected error, startup fails rather than allowing another instance.
+
 ## Windows startup
 
 Startup uses the `Emendia` value in `HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run`, pointing to the current executable. Disabling startup and saving removes this registration. After moving the executable, save again from its new location.

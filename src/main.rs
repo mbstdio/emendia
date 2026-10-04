@@ -30,6 +30,13 @@ fn main() {
 }
 
 fn run() -> Result<()> {
+    let store = SettingsStore::new()?;
+    let Some(_instance) =
+        emendia::platform::single_instance::acquire(&store.path().with_file_name("instance.lock"))?
+    else {
+        tracing::info!("Emendia is already running");
+        return Ok(());
+    };
     emendia::platform::initialize()?;
     let smoke_onboarding = std::env::args().any(|argument| argument == "--smoke-test-onboarding");
     let smoke_shortcuts = cfg!(target_os = "linux")
@@ -61,7 +68,6 @@ fn run() -> Result<()> {
     } else {
         Operation::Translation
     };
-    let store = SettingsStore::new()?;
     let (mut settings, first_run, mut error) = match store.load() {
         Ok(Some(settings)) => {
             let first_run = !settings.onboarding_completed;
