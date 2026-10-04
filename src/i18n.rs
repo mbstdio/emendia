@@ -255,6 +255,7 @@ catalog! {
         "Missing configuration directory" => "Dossier de configuration absent",
         "Unable to save the configuration" => "Impossible d’enregistrer la configuration",
         "Unable to access the system keyring" => "Accès au trousseau du système impossible",
+        "Credential service interrupted" => "Service des identifiants interrompu",
         "Unable to read the API key" => "Impossible de lire la clé API",
         "Unable to save the API key" => "Impossible d’enregistrer la clé API",
         "Unable to restore the previous API key; check the saved credential." => "Impossible de restaurer la clé API précédente ; vérifie la clé enregistrée.",

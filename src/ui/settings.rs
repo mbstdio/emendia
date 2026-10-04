@@ -467,14 +467,7 @@ impl SettingsView {
             self.api_key_loading = false;
             return;
         }
-        if !reqwest::Url::parse(&url).is_ok_and(|url| {
-            matches!(url.scheme(), "http" | "https")
-                && url.host_str().is_some()
-                && url.username().is_empty()
-                && url.password().is_none()
-                && url.query().is_none()
-                && url.fragment().is_none()
-        }) {
+        if settings::validate_provider_url(&url).is_err() {
             self.api_key_loading = false;
             return;
         }

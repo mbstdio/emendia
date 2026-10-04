@@ -18,6 +18,10 @@ shortcuts reserved until persistence succeeds, and restores the previous state
 on failure. Settings controls and window closure are temporarily disabled while
 a save completes.
 
+Credential reads, legacy migration, writes and save rollbacks are serialized
+within the process, including calls from previews and quick actions. A migration
+that was started before a save cannot overwrite the newly committed key.
+
 ## Single instance
 
 On Windows and Linux, only one Emendia instance can run per configuration profile.

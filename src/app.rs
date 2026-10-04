@@ -770,19 +770,7 @@ impl Controller {
         let saved = next.clone();
         let task = self.runtime.spawn_blocking(move || {
             startup::configure(next.launch_at_startup, || {
-                let old_key = settings::load_api_key(&next.base_url)?;
-                settings::save_api_key(&next.base_url, &key)?;
-                if let Err(error) = store.save(&next) {
-                    if let Err(rollback) = settings::save_api_key(&next.base_url, &old_key) {
-                        let message = format!(
-                            "{error:#}. {}: {rollback:#}",
-                            t("Unable to restore the previous API key; check the saved credential.")
-                        );
-                        return Err(error.context(message));
-                    }
-                    return Err(error);
-                }
-                Ok(())
+                store.save_with_api_key(&next, &key)
             })
         });
         Ok(cx.spawn(async move |this, cx| {

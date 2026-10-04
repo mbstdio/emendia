@@ -5,7 +5,13 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::Mutex,
 };
+
+// Key reads can migrate legacy credentials. Serialize them with complete save
+// transactions so a delayed migration cannot overwrite a newly saved key.
+// ponytail: one global lock; use per-endpoint locks if concurrent keyring waits become a bottleneck.
+static KEYRING_OPERATION: Mutex<()> = Mutex::new(());
 
 pub const LANGUAGES: &[&str] = &[
     "French",
@@ -193,19 +199,7 @@ fn onboarding_already_completed() -> bool {
 
 impl Settings {
     pub fn validate(&self) -> Result<()> {
-        let url = reqwest::Url::parse(&self.base_url).context(t("Invalid provider URL"))?;
-        if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
-            bail!(t("The URL must start with http:// or https://."));
-        }
-        if !url.username().is_empty()
-            || url.password().is_some()
-            || url.query().is_some()
-            || url.fragment().is_some()
-        {
-            bail!(t(
-                "The URL must not contain credentials, query parameters or a fragment."
-            ));
-        }
+        validate_provider_url(&self.base_url)?;
         if self.model.trim().is_empty() {
             bail!(t("Enter the model name."));
         }
@@ -241,6 +235,23 @@ impl Settings {
             self.base_url.trim_end_matches('/')
         ))?)
     }
+}
+
+pub fn validate_provider_url(base_url: &str) -> Result<reqwest::Url> {
+    let url = reqwest::Url::parse(base_url).context(t("Invalid provider URL"))?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        bail!(t("The URL must start with http:// or https://."));
+    }
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        bail!(t(
+            "The URL must not contain credentials, query parameters or a fragment."
+        ));
+    }
+    Ok(url)
 }
 
 #[derive(Clone)]
@@ -302,6 +313,29 @@ impl SettingsStore {
         self.write(settings)
     }
 
+    /// Hold the credential lock through migration, persistence and any rollback.
+    /// Call on a background worker, just like load_api_key and save_api_key.
+    pub fn save_with_api_key(&self, settings: &Settings, key: &str) -> Result<()> {
+        settings.validate()?;
+        settings.validate_hotkeys()?;
+        let _operation = KEYRING_OPERATION
+            .lock()
+            .map_err(|_| anyhow::anyhow!(t("Credential service interrupted")))?;
+        let old_key = load_api_key_unlocked(&settings.base_url)?;
+        save_api_key_unlocked(&settings.base_url, key)?;
+        if let Err(error) = self.write(settings) {
+            if let Err(rollback) = save_api_key_unlocked(&settings.base_url, &old_key) {
+                let message = format!(
+                    "{error:#}. {}: {rollback:#}",
+                    t("Unable to restore the previous API key; check the saved credential.")
+                );
+                return Err(error.context(message));
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+
     pub fn save_theme(&self, saved: &Settings, theme: ThemePreference) -> Result<Settings> {
         let mut next = saved.clone();
         next.theme = theme;
@@ -347,6 +381,13 @@ pub fn normalize_endpoint(base_url: &str) -> &str {
 }
 
 pub fn load_api_key(base_url: &str) -> Result<String> {
+    let _operation = KEYRING_OPERATION
+        .lock()
+        .map_err(|_| anyhow::anyhow!(t("Credential service interrupted")))?;
+    load_api_key_unlocked(base_url)
+}
+
+fn load_api_key_unlocked(base_url: &str) -> Result<String> {
     match credential(base_url)?.get_password() {
         Ok(key) => Ok(key),
         Err(keyring::Error::NoEntry) => {
@@ -366,6 +407,13 @@ pub fn load_api_key(base_url: &str) -> Result<String> {
 }
 
 pub fn save_api_key(base_url: &str, key: &str) -> Result<()> {
+    let _operation = KEYRING_OPERATION
+        .lock()
+        .map_err(|_| anyhow::anyhow!(t("Credential service interrupted")))?;
+    save_api_key_unlocked(base_url, key)
+}
+
+fn save_api_key_unlocked(base_url: &str, key: &str) -> Result<()> {
     let entry = credential(base_url)?;
     if key.is_empty() {
         match entry.delete_credential() {
