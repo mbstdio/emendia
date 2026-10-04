@@ -56,7 +56,12 @@ fn run() -> Result<()> {
         || smoke_correction
         || smoke_quick
         || std::env::args().any(|argument| argument == "--smoke-test");
-    let store = SettingsStore::new()?;
+    let store = if smoke_test && let Some(directory) = std::env::var_os("EMENDIA_SMOKE_CONFIG_DIR")
+    {
+        SettingsStore::diagnostic(std::path::Path::new(&directory))
+    } else {
+        SettingsStore::new()?
+    };
     let Some(_instance) =
         emendia::platform::single_instance::acquire(&store.path().with_file_name("instance.lock"))?
     else {

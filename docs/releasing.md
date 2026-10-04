@@ -176,7 +176,10 @@ Before the first public release, use a manual build and validate on a clean Wind
 - Confirm uninstall preserves a startup entry pointing to a portable copy.
 - Check the downloaded files with `Get-FileHash -Algorithm SHA256` against `SHA256SUMS.txt`.
 
-Interactive desktop/clipboard tests from the [development guide](development.md#verification) remain manual checks; they are not enabled on hosted CI runners.
+Interactive Windows desktop/clipboard tests from the [development guide](development.md#verification)
+are automated by the separate **Verify Windows desktop** workflow on a dedicated
+interactive runner. Run it for the release commit before publishing; hosted CI
+runners and the Windows release builder do not run these graphical checks.
 
 `packaging/windows/test-installer.ps1` automates binary identity, repeated installation, locked-file guards and startup cleanup checks in CI. It installs into a temporary directory and refuses to run if the user profile already has an Emendia installation, Start Menu shortcut or startup entry. Run it only on a disposable profile.
 

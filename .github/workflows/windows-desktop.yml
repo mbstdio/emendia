@@ -1,0 +1,62 @@
+name: Verify Windows desktop
+
+on:
+   workflow_dispatch:
+      inputs:
+         ref:
+            description: "Optional branch, tag or commit to verify on the interactive desktop"
+            required: false
+            type: string
+
+permissions:
+   contents: read
+
+concurrency:
+   group: windows-desktop-tests
+   cancel-in-progress: false
+
+jobs:
+   desktop:
+      runs-on:
+         group: MBStudio
+         labels: [self-hosted, windows, x64, interactive]
+      timeout-minutes: 90
+      defaults:
+         run:
+            shell: pwsh
+      env:
+         CARGO_TERM_COLOR: always
+         RUST_TOOLCHAIN: "1.99.0"
+      steps:
+         - name: Check out the requested source
+           uses: actions/checkout@v6
+           with:
+              ref: ${{ inputs.ref || github.ref }}
+              persist-credentials: false
+
+         - name: Verify an interactive session is available
+           run: |
+              if (-not [Environment]::UserInteractive -or [Diagnostics.Process]::GetCurrentProcess().SessionId -eq 0) {
+                throw 'Start the interactive runner in an unlocked user session, not as a Windows service'
+              }
+
+         - name: Configure persistent Cargo build directory
+           env:
+              REPOSITORY: ${{ github.repository }}
+           run: |
+              $target = Join-Path $env:RUNNER_TOOL_CACHE "emendia/$env:REPOSITORY/target"
+              "CARGO_TARGET_DIR=$target" >> $env:GITHUB_ENV
+
+         - name: Install Rust
+           run: |
+              rustup toolchain install $env:RUST_TOOLCHAIN --profile minimal --component rustfmt --component clippy
+              if ($LASTEXITCODE -ne 0) { throw 'Rust installation failed' }
+
+         - name: Check formatting
+           run: cargo "+$env:RUST_TOOLCHAIN" fmt --all --check
+
+         - name: Build the diagnostic executable
+           run: cargo "+$env:RUST_TOOLCHAIN" build --locked
+
+         - name: Verify native integration and graphical flows
+           run: ./packaging/windows/test-desktop.ps1 -Binary "$env:CARGO_TARGET_DIR/debug/emendia.exe"

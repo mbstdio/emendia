@@ -303,7 +303,10 @@ fn clipboard_and_native_edit_round_trip() -> Result<()> {
         );
     }
     let error = capture(capture_target()?).unwrap_err();
-    assert!(error.to_string().contains("100 000"));
+    assert_eq!(
+        error.to_string(),
+        crate::i18n::t("Selection too long (maximum 100,000 UTF-16 code units).")
+    );
     assert_eq!(
         read_text(unsafe { GetCurrentProcessId() })?.0,
         "avant une capture trop longue"

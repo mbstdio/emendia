@@ -250,6 +250,14 @@ pub struct SettingsStore {
 }
 
 impl SettingsStore {
+    /// Graphical diagnostics can use an isolated profile without legacy migration.
+    pub fn diagnostic(directory: &Path) -> Self {
+        Self {
+            path: directory.join("settings.json"),
+            legacy_path: None,
+        }
+    }
+
     pub fn new() -> Result<Self> {
         let dirs = ProjectDirs::from("dev", "Emendia", "Emendia")
             .context(t("Unable to find the configuration directory"))?;

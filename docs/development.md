@@ -136,6 +136,29 @@ An additional Windows test launches an isolated native editor and checks capture
 cargo test --locked --lib clipboard_and_native_edit_round_trip -- --ignored --nocapture --test-threads=1
 ```
 
+Run all Windows desktop checks together after building the executable:
+
+```powershell
+cargo build --locked
+./packaging/windows/test-desktop.ps1
+```
+
+The script requires an unlocked interactive desktop and runs the native editor
+test followed by English/French graphical diagnostics, including dark onboarding
+and quick-flow recovery. Each graphical process has a 45-second timeout. Smoke
+tests use a temporary `EMENDIA_SMOKE_CONFIG_DIR`, a mock keyring and a localhost
+provider, so they never load or migrate the user's configuration. The native
+editor test temporarily uses the real clipboard and restores its snapshot.
+`EMENDIA_SMOKE_CONFIG_DIR` is honored only with smoke-test flags.
+
+The **Verify Windows desktop** Actions workflow automates the same script.
+It is launched manually on a dedicated runner in `MBStudio` with labels
+`self-hosted`, `windows`, `x64`, and `interactive`. Start that runner in a logged-in,
+unlocked disposable Windows user session with compatible graphics drivers and
+the normal Windows build prerequisites. Do not run it as a Windows service or
+use its desktop for other work while diagnostics run. The normal PR checks and
+release builders do not require this interactive runner.
+
 Manual checks should cover language changes with another window open, persistence after restart, unsaved form edits during theme/language changes, all five proofreading styles, shortcut conflicts, startup registration, changed selections during processing, offline providers, multi-monitor placement and 125–150% DPI.
 
 ### Linux verification
