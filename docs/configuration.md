@@ -26,8 +26,8 @@ that was started before a save cannot overwrite the newly committed key.
 
 On Windows and Linux, only one Emendia instance can run per configuration profile.
 A second launch exits silently with a successful exit code, leaving the existing
-instance running. This also applies to `--settings`; use the tray icon to open
-Settings when Emendia is already running. Windows portable and installed builds
+instance running. This also applies to `--settings`; use the tray menu to open
+Settings or the editor when Emendia is already running. Windows portable and installed builds
 share the same profile and instance lock.
 
 An exclusive operating-system lock on `instance.lock`, beside `settings.json`,
@@ -39,17 +39,17 @@ because of an unexpected error, startup fails rather than allowing another insta
 
 ## Windows startup
 
-Startup uses the `Emendia` value in `HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run`, pointing to the current executable. Disabling startup and saving removes this registration. After moving the executable, save again from its new location.
+Startup uses the `Emendia` value in `HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run`, pointing to the current executable with `--background` to stay in the tray. Disabling startup and saving removes this registration. After moving the executable, save again from its new location. Save settings once to update startup registrations created by older versions without `--background`.
 
 ## Linux startup and tray
 
 Startup writes `$XDG_CONFIG_HOME/autostart/emendia.desktop`, normally
-`~/.config/autostart/emendia.desktop`, with the current executable's absolute path.
+`~/.config/autostart/emendia.desktop`, with the current executable's absolute path and `--background`.
 Disabling startup removes the entry. A failed settings save restores the previous
 entry. Save again after moving the executable.
 
 The tray uses AppIndicator/StatusNotifierWatcher. GNOME may require an indicator
-extension. Without a tray host, Settings opens and closing the last window exits
+extension. Without a tray host, the editor opens and closing the last window exits
 instead of leaving an inaccessible background process. `--settings` opens Settings
 on launch. A native X11 login session is required; Wayland/XWayland sessions are
 not supported yet.

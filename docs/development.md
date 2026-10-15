@@ -69,6 +69,7 @@ src/
   translation.rs           OpenAI-compatible client and translation/proofreading prompts
   smoke.rs                 Local mock provider for graphical smoke tests
   ui/
+    editor.rs              Integrated translation/proofreading editor and session drafts
     settings.rs            Settings categories and shortcut capture
     preview.rs             Editable preview and cancellable tasks
     status.rs              Non-activating status popup

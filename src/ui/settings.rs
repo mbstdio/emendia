@@ -1372,6 +1372,7 @@ impl SettingsView {
                 )
                 .on_click(cx.listener(|this, _, window, cx| {
                     if this.onboarding_step == Some(5) {
+                        let _ = this.controller.update(cx, |app, cx| app.open_editor(cx));
                         window.remove_window();
                     } else {
                         this.advance_onboarding(window, cx);

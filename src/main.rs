@@ -73,6 +73,7 @@ fn run() -> Result<()> {
     };
     emendia::platform::initialize()?;
     let show_settings = std::env::args().any(|argument| argument == "--settings");
+    let background = std::env::args().any(|argument| argument == "--background");
     if smoke_test {
         // Graphical diagnostics must not depend on or access the user's keyring.
         keyring::set_default_credential_builder(keyring::mock::default_credential_builder());
@@ -132,12 +133,12 @@ fn run() -> Result<()> {
                 Ok(controller) => {
                     let controller = cx.new(|_| controller);
                 controller.update(cx, |controller, cx| {
-                    controller.start(first_run || smoke_test || show_settings, error, cx);
+                    controller.start(first_run || smoke_test || show_settings, !smoke_test && !show_settings && !background, error, cx);
                        #[cfg(target_os = "linux")]
                         if smoke_shortcuts {
                             controller.open_shortcut_smoke(completion.clone(), cx);
                        }
-                       if smoke_test && !smoke_onboarding && !smoke_shortcuts {
+                        if smoke_test && !smoke_onboarding && !smoke_shortcuts {
                           // Let the initial Settings window finish its foreground activation
                           // before measuring focus preservation by the status popup.
                           cx.spawn(async move |controller, cx| {

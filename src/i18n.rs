@@ -91,6 +91,19 @@ macro_rules! catalog {
 }
 
 catalog! {
+    "Open Emendia" => "Ouvrir Emendia",
+    "Translate" => "Traduction",
+    "Correct / rephrase" => "Corriger / reformuler",
+    "Send to proofreading" => "Envoyer en correction",
+    "Send to translation" => "Envoyer en traduction",
+    "Transfer the result to the other tool" => "Transférer le résultat dans l’autre outil",
+    "Transfer your text to the other tool" => "Transférer ton texte dans l’autre outil",
+    "Text transferred — choose your options and start processing." => "Texte transféré — choisis tes options et lance le traitement.",
+    "Type or paste your text here…" => "Saisis ou colle ton texte ici…",
+    "Your result will appear here." => "Le résultat apparaîtra ici.",
+    "Your text" => "Ton texte",
+    "Result" => "Résultat",
+    "Ready — you can edit or copy the result." => "Prêt — tu peux modifier ou copier le résultat.",
         "Enter your OpenAI API key, or choose another provider." => "Saisissez votre clé API OpenAI ou choisissez un autre fournisseur.",
         "Emendia — Welcome" => "Emendia — Bienvenue",
         "Welcome to Emendia" => "Bienvenue dans Emendia",

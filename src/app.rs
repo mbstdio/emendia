@@ -8,14 +8,20 @@ use crate::{
     },
     settings::{self, Operation, Settings, SettingsStore, ThemePreference},
     translation::Translator,
-    ui::{preview::Preview, settings::SettingsView, status::StatusView},
+    ui::{
+        editor::{Editor, EditorDraft},
+        preview::Preview,
+        settings::SettingsView,
+        status::StatusView,
+    },
 };
 use anyhow::{Context as _, Result};
 use global_hotkey::HotKeyState;
 use gpui_kit::*;
-use std::time::Duration;
 #[cfg(target_os = "linux")]
-use std::{cell::Cell, rc::Rc};
+use std::cell::Cell;
+use std::time::Duration;
+use std::{cell::RefCell, rc::Rc};
 use tokio::runtime::Runtime;
 use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent, menu::MenuEvent};
 
@@ -27,6 +33,8 @@ pub struct Controller {
     hotkey: HotkeyRegistration,
     tray: Tray,
     settings_window: Option<(AnyWindowHandle, WeakEntity<SettingsView>)>,
+    editor_window: Option<(AnyWindowHandle, WeakEntity<Editor>)>,
+    editor_draft: Option<Rc<RefCell<EditorDraft>>>,
     preview_window: Option<(AnyWindowHandle, WeakEntity<Preview>)>,
     status_window: Option<(AnyWindowHandle, WeakEntity<StatusView>)>,
     session_active: bool,
@@ -196,6 +204,8 @@ impl Controller {
         system_appearance: WindowAppearance,
     ) -> Result<Self> {
         Ok(Self {
+            editor_draft: None,
+            editor_window: None,
             settings,
             store,
             runtime,
@@ -214,6 +224,7 @@ impl Controller {
     pub fn start(
         &mut self,
         first_run: bool,
+        show_editor: bool,
         initial_error: Option<String>,
         cx: &mut Context<Self>,
     ) {
@@ -239,8 +250,10 @@ impl Controller {
         if !self.tray.available() {
             cx.set_quit_mode(QuitMode::LastWindowClosed);
         }
-        if first_run || error.is_some() || !self.tray.available() {
+        if first_run || error.is_some() {
             self.open_settings(error, cx);
+        } else if show_editor || !self.tray.available() {
+            self.open_editor(cx);
         }
         // Drain desktop service events without blocking GPUI, even with no open windows.
         cx.spawn(async move |this, cx| {
@@ -272,6 +285,8 @@ impl Controller {
                 if !self.persistence_active {
                     cx.quit();
                 }
+            } else if event.id == *self.tray.open_id() {
+                self.open_editor(cx);
             } else if event.id == *self.tray.settings_id() {
                 self.open_settings(None, cx);
             } else if event.id == *self.tray.enabled_id() {
@@ -302,7 +317,7 @@ impl Controller {
                     ..
                 }
             ) {
-                self.open_settings(None, cx);
+                self.open_editor(cx);
             }
         }
         while let Some(event) = crate::platform::hotkey::next_event() {
@@ -713,6 +728,49 @@ impl Controller {
         }
     }
 
+    pub fn open_editor(&mut self, cx: &mut Context<Self>) {
+        if !self.settings.onboarding_completed {
+            self.open_settings(None, cx);
+            return;
+        }
+        if let Some((handle, _)) = &self.editor_window
+            && handle
+                .update(cx, |_, window, _| window.activate_window())
+                .is_ok()
+        {
+            return;
+        }
+        let display_id = desktop::cursor_monitor()
+            .ok()
+            .map(DisplayId::new)
+            .filter(|id| cx.find_display(*id).is_some());
+        let bounds = Bounds::centered(display_id, size(px(860.), px(720.)), cx);
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            display_id,
+            titlebar: Some(TitlebarOptions {
+                title: Some("Emendia".into()),
+                ..Default::default()
+            }),
+            window_min_size: Some(size(px(720.), px(600.))),
+            ..Default::default()
+        };
+        let draft = self
+            .editor_draft
+            .get_or_insert_with(|| Rc::new(RefCell::new(EditorDraft::new(self.settings.clone()))))
+            .clone();
+        let controller = cx.entity().downgrade();
+        let translator = self.translator.clone();
+        let runtime = self.runtime.handle().clone();
+        match gpui_kit::open_window(options, cx, |window, cx| {
+            crate::ui::theme::configure_window(window, cx);
+            cx.new(|cx| Editor::new(draft, controller, translator, runtime, window, cx))
+        }) {
+            Ok((handle, view)) => self.editor_window = Some((handle, view.downgrade())),
+            Err(error) => tracing::error!(%error, "Unable to open editor"),
+        }
+    }
+
     pub fn smoke_onboarding_step(&mut self, step: usize, cx: &mut Context<Self>) {
         assert!(!self.settings.onboarding_completed);
         let expected_display = desktop::cursor_monitor().ok().map(DisplayId::new);
@@ -856,9 +914,15 @@ impl Controller {
         });
         self.tray.localize();
         let preview = self.preview_window.clone();
+        let editor = self.editor_window.clone();
         let status = self.status_window.clone();
         // Update other windows after releasing this Controller entity lease.
         cx.defer(move |cx| {
+            if let Some((handle, view)) = editor {
+                let _ = handle.update(cx, |_, window, cx| {
+                    let _ = view.update(cx, |view, cx| view.localize(window, cx));
+                });
+            }
             if let Some((handle, view)) = preview {
                 let _ = handle.update(cx, |_, window, cx| {
                     let _ = view.update(cx, |view, cx| view.localize(window, cx));

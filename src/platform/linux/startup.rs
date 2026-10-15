@@ -30,7 +30,7 @@ fn desktop_entry(executable: &Path) -> Result<String> {
         .replace('%', "%%");
     let exec = format!("\"{quoted}\"").replace('\\', "\\\\");
     Ok(format!(
-        "[Desktop Entry]\nType=Application\nName=Emendia\nComment=Translation and proofreading\nExec={exec}\nTerminal=false\nX-GNOME-Autostart-enabled=true\n"
+        "[Desktop Entry]\nType=Application\nName=Emendia\nComment=Translation and proofreading\nExec={exec} --background\nTerminal=false\nX-GNOME-Autostart-enabled=true\n"
     ))
 }
 
@@ -98,7 +98,7 @@ mod tests {
     fn exec_quotes_spaces_unicode_and_special_characters() {
         let entry = desktop_entry(Path::new("/tmp/été $HOME `app` \\\"100%/emendia")).unwrap();
         assert!(
-            entry.contains(
+            entry.replace(" --background", "").contains(
                 "Exec=\"/tmp/été \\\\$HOME \\\\`app\\\\` \\\\\\\\\\\\\"100%%/emendia\"\n"
             )
         );

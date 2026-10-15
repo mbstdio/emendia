@@ -43,7 +43,7 @@ fn startup_command(executable: &Path) -> Vec<u16> {
     // Preserve Unicode paths and quote spaces for Windows command-line parsing.
     std::iter::once('"' as u16)
         .chain(executable.as_os_str().encode_wide())
-        .chain(['"' as u16, 0])
+        .chain("\" --background\0".encode_utf16())
         .collect()
 }
 
@@ -166,7 +166,7 @@ mod tests {
         let command = startup_command(Path::new(r"C:\Program Files\Traduction été\tool.exe"));
         assert_eq!(
             String::from_utf16(&command[..command.len() - 1]).unwrap(),
-            "\"C:\\Program Files\\Traduction été\\tool.exe\""
+            "\"C:\\Program Files\\Traduction été\\tool.exe\" --background"
         );
         assert!(read_entry(&subkey).unwrap().is_none());
         write_named_entry(&subkey, "TranslationTool", Some(&command)).unwrap();

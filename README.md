@@ -11,6 +11,7 @@
 Emendia is a free and open-source desktop app that helps you translate and improve selected text without leaving the application you're using. Available for Windows and Linux X11, it works with cloud and locally hosted AI models.
 
 - **Translate selected text** into your preferred language.
+- **Type or paste text in Emendia** to translate, proofread or rephrase without a shortcut.
 - **Fix spelling and grammar** while preserving your voice.
 - **Refine your writing** with fluent, professional, casual or concise styles.
 - **Review before replacing** — edit a suggestion, request another, or copy the result. Quick actions can replace your selection automatically.
@@ -65,7 +66,7 @@ Choose a download from the [latest release](https://github.com/mbstdio/emendia/r
 3. Press **Ctrl+F11**, then release the keys, to preview a correction. Use **Ctrl+F12** for a translation.
 4. Review or edit the suggestion, then choose **Replace** or **Copy**.
 
-Click the tray icon to open **Settings**. Closing windows keeps Emendia running; choose **Quit** in the tray menu to exit. On Linux desktops without a tray host, Settings opens normally and closing the last window quits Emendia.
+The main window opens at launch: type or paste text, choose **Translate** or **Correct / rephrase**, then edit or copy the result. Click the tray icon or choose **Open Emendia** to return to it; **Settings** remains available in the tray menu. Closing windows keeps Emendia running, with editor drafts held in memory until you quit. Choose **Quit** in the tray menu to exit. At sign-in, automatic startup stays in the tray. On Linux desktops without a tray host, the main window opens normally and closing the last window quits Emendia.
 
 ## Keyboard shortcuts
 

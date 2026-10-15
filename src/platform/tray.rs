@@ -21,6 +21,17 @@ impl Tray {
         })
     }
 
+    pub fn open_id(&self) -> &MenuId {
+        #[cfg(target_os = "windows")]
+        {
+            self.inner.open.id()
+        }
+        #[cfg(target_os = "linux")]
+        {
+            &self.inner.open
+        }
+    }
+
     pub fn settings_id(&self) -> &MenuId {
         #[cfg(target_os = "windows")]
         {

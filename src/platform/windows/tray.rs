@@ -7,6 +7,7 @@ use tray_icon::{
 
 pub struct Tray {
     _icon: TrayIcon,
+    pub open: MenuItem,
     pub settings: MenuItem,
     pub enabled: CheckMenuItem,
     pub quit: MenuItem,
@@ -15,10 +16,17 @@ pub struct Tray {
 impl Tray {
     pub fn new(icon: Icon) -> Result<Self> {
         let menu = Menu::new();
+        let open = MenuItem::new(t("Open Emendia"), true, None);
         let settings = MenuItem::new(t("Settings"), true, None);
         let enabled = CheckMenuItem::new(t("Shortcuts enabled"), true, true, None);
         let quit = MenuItem::new(t("Quit"), true, None);
-        menu.append_items(&[&settings, &enabled, &PredefinedMenuItem::separator(), &quit])?;
+        menu.append_items(&[
+            &open,
+            &settings,
+            &enabled,
+            &PredefinedMenuItem::separator(),
+            &quit,
+        ])?;
         let icon = TrayIconBuilder::new()
             .with_tooltip(t("Emendia — translation and proofreading"))
             .with_icon(icon)
@@ -26,6 +34,7 @@ impl Tray {
             .build()?;
         Ok(Self {
             _icon: icon,
+            open,
             settings,
             enabled,
             quit,
@@ -33,6 +42,7 @@ impl Tray {
     }
 
     pub fn localize(&self) {
+        self.open.set_text(t("Open Emendia"));
         self.settings.set_text(t("Settings"));
         self.enabled.set_text(t("Shortcuts enabled"));
         self.quit.set_text(t("Quit"));

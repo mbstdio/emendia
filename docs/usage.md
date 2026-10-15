@@ -4,15 +4,25 @@
 
 ## Setup
 
-On first launch, the setup assistant guides you through appearance, AI provider, translation and proofreading preferences, shortcuts, and startup. Enter your provider's base URL, exact model name and API key if required. **Test connection** is recommended but optional. Click **Finish setup** to save and activate your settings, then **Let's go** to leave Emendia running in the tray.
+On first launch, the setup assistant guides you through appearance, AI provider, translation and proofreading preferences, shortcuts, and startup. Enter your provider's base URL, exact model name and API key if required. **Test connection** is recommended but optional. Click **Finish setup** to save and activate your settings, then **Let's go** to open the editor.
 
-Closing the assistant before finishing quits Emendia and opens setup again on the next launch. After setup is saved, closing the confirmation screen leaves it running in the tray. Appearance and interface-language changes alone do not complete setup. Existing configurations, including imported legacy settings, retain their usual startup behavior.
+Closing the assistant before finishing quits Emendia and opens setup again on the next launch. After setup is saved, closing the confirmation screen leaves it running in the tray. Appearance and interface-language changes alone do not complete setup.
 
-Later launches stay in the tray. Click its icon or choose **Settings** to change your configuration. Setup and Settings open on the cursor's monitor, centered in its usable area with its DPI scaling. Setup is non-resizable; Settings is resizable.
+Later manual launches open the editor. Click the tray icon or choose **Open Emendia** to bring it back; choose **Settings** to change your configuration. Automatic startup at sign-in stays in the tray (`--background`). Setup and Settings open on the cursor's monitor, centered in its usable area with its DPI scaling. Setup is non-resizable; Settings is resizable.
 
-On Linux, use an Xorg/X11 session. If no tray host is available, Settings opens on
+On Linux, use an Xorg/X11 session. If no tray host is available, the editor opens on
 every launch and closing the last window exits. GNOME may need an AppIndicator
 extension to provide the background tray behavior. See [Linux integration](configuration.md#linux-startup-and-tray).
+
+## Integrated editor
+
+Choose **Translate** or **Correct / rephrase**, then type or paste text into **Your text**. Select the translation languages or correction style and click the action button. The result is editable; **Copy** puts it on the clipboard without replacing text in another application. Processing and errors appear in the window, and failed requests can be retried with the same button.
+
+Each tool keeps its own source and result. Closing and reopening the editor preserves these drafts and its options in memory, but quitting Emendia discards them; they are not saved to disk. Closing during processing cancels the request. Editor language/style choices do not change saved shortcut preferences. Provider/model changes saved in Settings apply to the next request.
+
+Use **Send to proofreading** or **Send to translation**, beside the processing button, to continue in the other tool. This transfers the result if available, otherwise your source text, and switches tools without starting a request. It replaces the destination's source text and clears its previous result; the original tool keeps its draft. The gear icon opens Settings.
+
+Shortcuts still capture text from another application and use their existing preview/replacement workflow.
 
 ## Providers
 

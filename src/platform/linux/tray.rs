@@ -14,6 +14,7 @@ enum Command {
 }
 
 pub struct Tray {
+    pub open: MenuId,
     pub settings: MenuId,
     pub enabled: MenuId,
     pub quit: MenuId,
@@ -37,10 +38,12 @@ impl Tray {
                 let initialized = (|| -> Result<_> {
                     gtk::init().context("Unable to initialize the GTK tray loop")?;
                     let menu = Menu::new();
+                    let open = MenuItem::new(t("Open Emendia"), true, None);
                     let settings = MenuItem::new(t("Settings"), true, None);
                     let enabled = CheckMenuItem::new(t("Shortcuts enabled"), true, true, None);
                     let quit = MenuItem::new(t("Quit"), true, None);
                     menu.append_items(&[
+                        &open,
                         &settings,
                         &enabled,
                         &PredefinedMenuItem::separator(),
@@ -51,9 +54,9 @@ impl Tray {
                         .with_icon(initial_icon)
                         .with_menu(Box::new(menu))
                         .build()?;
-                    Ok((icon, settings, enabled, quit))
+                    Ok((icon, open, settings, enabled, quit))
                 })();
-                let (icon, settings, enabled, quit) = match initialized {
+                let (icon, open, settings, enabled, quit) = match initialized {
                     Ok(values) => values,
                     Err(error) => {
                         let _ = ready.send(Err(error.to_string()));
@@ -62,6 +65,7 @@ impl Tray {
                 };
                 if ready
                     .send(Ok((
+                        open.id().clone(),
                         settings.id().clone(),
                         enabled.id().clone(),
                         quit.id().clone(),
@@ -82,6 +86,7 @@ impl Tray {
                                 }
                             }
                             Ok(Command::Localize) => {
+                                open.set_text(t("Open Emendia"));
                                 settings.set_text(t("Settings"));
                                 enabled.set_text(t("Shortcuts enabled"));
                                 quit.set_text(t("Quit"));
@@ -100,7 +105,8 @@ impl Tray {
                 gtk::main();
             })?;
         match result.recv_timeout(Duration::from_secs(5)) {
-            Ok(Ok((settings, enabled, quit))) => Ok(Self {
+            Ok(Ok((open, settings, enabled, quit))) => Ok(Self {
+                open,
                 settings,
                 enabled,
                 quit,
@@ -117,6 +123,7 @@ impl Tray {
 
     fn unavailable() -> Self {
         Self {
+            open: MenuId::new("open"),
             settings: MenuId::new("settings"),
             enabled: MenuId::new("enabled"),
             quit: MenuId::new("quit"),
